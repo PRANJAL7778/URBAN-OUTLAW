@@ -11,4 +11,11 @@ My own open world high graphics game
 * **Pre-overhaul build:** `backup/urban_outlaw_v3_working_build.zip` (tag `v3-working-baseline`)
 
 New modules: `src/ui.js`, `src/ui.css`, `src/camera.js`, `src/ik.js`, `src/pose.js`.
-Run locally with `node serve.js` and open `http://localhost:8080/`.
+
+Live build (GitHub Pages): <https://pranjal7778.github.io/URBAN-OUTLAW/>
+
+Run locally with `node serve.js` and open `http://localhost:8080/` (ES modules need a server —
+do not open `index.html` from `file://`).
+
+Re-run the automated tests with `cd tests/harness && bash setup.sh`, then see
+`tests/harness/README.md`.

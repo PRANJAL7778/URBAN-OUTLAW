@@ -125,6 +125,20 @@ untouched: src/city.js, src/car.js, src/character.js, src/vehicles.js,
           src/wheel.js, assets/*, packs/*, game.json, serve.js
 
 
+TRYING THE UPDATED BUILD
+---------------------------------------------------------------------------
+1. Online (GitHub Pages): https://pranjal7778.github.io/URBAN-OUTLAW/
+   Pages publishes the arena/89a95d54-urban-outlaw branch, so this URL serves
+   this commit. Open it on the phone in landscape. If the page looks like the
+   old build, pull to refresh — Pages caches aggressively after a deploy.
+2. Locally:  node serve.js   then open http://localhost:8080/
+   (ES modules + fetch need a server; do not open index.html from file://.)
+3. Re-run every automated claim in this changelog:
+   cd tests/harness && bash setup.sh
+   node --import ./dist_shim.mjs boot_test.mjs        (39 checks, the real main.js)
+   node ui_test.mjs && node pose_test.mjs && node cam_test.mjs && node config_test.mjs
+   node world_test.mjs && node physics_test.mjs && node drive_test.mjs && node asset_test.mjs
+
 KNOWN LIMITS (see TEST_REPORT_V3_OVERHAUL.md)
 ---------------------------------------------------------------------------
 * No browser or real-Android run was possible in this environment; everything

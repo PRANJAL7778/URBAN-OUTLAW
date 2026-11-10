@@ -166,7 +166,18 @@ mission state, save keys and vehicle records are still reachable and intact from
   return **200**.
 * `.nojekyll` is present, so GitHub Pages serves the files verbatim.
 
-## 8. Performance
+## 8. Deployment
+
+GitHub Pages for this repository is configured to publish the branch
+`arena/89a95d54-urban-outlaw` from `/`, so the URL below serves this commit once the Pages build
+finishes (it was still `building` when I stopped watching it — the sandbox has no outbound access
+to `*.github.io`, so **I could not load the live site to confirm it**).
+
+* Live URL: <https://pranjal7778.github.io/URBAN-OUTLAW/>
+* The build runs against commit `3951005`, and every path in `index.html` is relative and present,
+  so it will work from the `/URBAN-OUTLAW/` sub-path.
+
+## 9. Performance
 
 No new libraries, no extra textures, no post-processing. Additions are ~2 k lines of JS, two
 2-bone IK chains for the hero and one 16-bone rider solve per frame, next to the existing
@@ -177,7 +188,7 @@ the phone is open.
 **I have not measured frame time.** Please check the FPS line in Credits → diagnostics on the
 Realme 9i, and use Settings → Graphics (Auto / Low / High) if it dips.
 
-## 9. What still needs your phone
+## 10. What still needs your phone
 
 1. Landscape: joystick, PHONE, JUMP, DRIVE/BRAKE clear of the gesture bar and rounded corners.
 2. Walk, then orbit the camera next to a building — no wall clipping, no uncomfortable pull-in.

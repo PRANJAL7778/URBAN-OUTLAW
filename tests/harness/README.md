@@ -27,7 +27,7 @@ before re-running a suite. Generated files (`src/__*.js`, `node_modules/`, `asse
 `boot_test.mjs` executes the real `main.js` in jsdom with a stubbed `WebGLRenderer`, so it
 proves start-up order, DOM wiring, UI callbacks and gameplay state — but it cannot render a
 pixel. Nothing here measures frame rate, colour, layout on a real screen, or touch feel.
-Those need a browser and a phone (see section 9 of the test report).
+Those need a browser and a phone (see section 10 of the test report).
 
 `tdz.cjs` is a small independent checker for top-level "used before declared" bugs in a module
 (`node tdz.cjs ../../src/main.js`). It exists because that class of bug is invisible to every
