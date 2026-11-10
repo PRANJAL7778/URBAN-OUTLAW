@@ -1,0 +1,28 @@
+URBAN OUTLAW — AI HANDOFF INSTRUCTIONS
+
+You are helping update an existing mobile-friendly 3D web game called URBAN OUTLAW.
+
+IMPORTANT: This is an existing game recovered from the game's APK payload, not a blank project.
+
+RULES
+1. Preserve all existing user-provided GLB model files exactly as they are. Do not replace, rename, re-export, or delete characterRIGGED, either office building, either apartment building, or the light-blue supercar model.
+2. Do not replace the existing Pixelfork runtime files under packs/ or pixelfork/ unless there is a demonstrated compatibility issue. Prefer small changes to src/main.js, src/city.js, src/config.js and assets/manifest.json.
+3. Keep the current menu, mobile joystick, swipe camera look, jump, settings, sound toggle, vibration toggle, token collection and save-score behaviour unless specifically requested to change them.
+4. Target Android phones with 4 GB RAM; avoid expensive per-frame allocations, excessive shadows, unnecessarily high-resolution textures, and high draw-call counts.
+5. There is no custom game music or standalone MP3/WAV content in the current payload. Keep the existing built-in SFX library functional. New textures and sounds will be added later; do not invent external asset paths that do not exist.
+6. Return the complete updated web project folder as a ZIP, retaining every required dependency and asset. Also list every changed file and explain how to test the browser build before creating a new APK.
+7. Do not claim you have built/tested an APK unless you actually have. If a feature cannot work in the current environment, say so and provide the code changes and test instructions.
+
+CURRENT PROJECT MAP
+- index.html: browser entry point and module imports
+- src/main.js: game menu/HUD, controls, camera, score loop, player setup, building model loading
+- src/city.js: road layout, city blocks, trees, buildings, and collision blocks
+- src/config.js: editable game configuration
+- assets/manifest.json: registered GLB models
+- assets/: the original user-provided GLB files and asset manifest
+- pixelfork/: platform runtime adapters
+- packs/: Pixelfork/Three.js/physics/UI/SFX dependencies
+- game.json: runtime pack declarations
+
+FIRST TASK
+Inspect the project and report a brief plan before editing. Prioritize (A) fixing why uploaded apartment/office buildings sometimes fail to display, (B) integrating the existing supercar GLB as a controllable drivable vehicle without losing walking mode, and (C) keeping performance smooth on a 4 GB Android phone. Do not begin by adding high-resolution textures or new audio; those will be handled after the core mechanics work.

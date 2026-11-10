@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="pf-game" content="923f4d05-9db0-4db0-9ef4-c68b2584923e">
+<title>URBAN OUTLAW</title>
+<!-- Pixelfork platform file: the libraries this game was built with (pinned in game.json). -->
+<link rel="stylesheet" href="./packs/ui/clean-flat@0.3.0-A/files/kit.css">
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#000;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}#game{position:fixed;inset:0}</style>
+<script type="importmap">{
+  "imports": {
+    "three": "./packs/render-3d/three@0.186.0/files/three.module.js",
+    "three/addons/": "./packs/render-3d/three@0.186.0/files/addons/",
+    "crashcat": "./packs/physics-3d/crashcat@0.0.5/files/crashcat.js",
+    "crashcat/three": "./packs/physics-3d/crashcat@0.0.5/files/crashcat-three.js",
+    "vfx": "./packs/vfx/pixelfork-vfx@0.8.1-A/files/vfx.module.js",
+    "ragdoll": "./packs/character/pixelfork-ragdoll@0.9.7-A/files/ragdoll.module.js"
+  }
+}</script>
+<script src="pixelfork/bridge.js"></script>
+<script src="./packs/audio/howler@2.2.4/files/howler.min.js"></script>
+<script src="./packs/sfx/pixelfork-sfx@0.9.0-A/files/sfx.js"></script>
+<script src="./packs/ui/clean-flat@0.3.0-A/files/kit.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
