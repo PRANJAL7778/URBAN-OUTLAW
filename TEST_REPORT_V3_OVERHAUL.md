@@ -166,16 +166,43 @@ mission state, save keys and vehicle records are still reachable and intact from
   return **200**.
 * `.nojekyll` is present, so GitHub Pages serves the files verbatim.
 
-## 8. Deployment
+## 8. Deployment (GitHub Pages) — needs your attention
 
-GitHub Pages for this repository is configured to publish the branch
-`arena/89a95d54-urban-outlaw` from `/`, so the URL below serves this commit once the Pages build
-finishes (it was still `building` when I stopped watching it — the sandbox has no outbound access
-to `*.github.io`, so **I could not load the live site to confirm it**).
+Pages for this repository is configured for branch `arena/89a95d54-urban-outlaw`, path `/`
+(`build_type: legacy`). The new commits were pushed and a Pages run started for each.
 
-* Live URL: <https://pranjal7778.github.io/URBAN-OUTLAW/>
-* The build runs against commit `3951005`, and every path in `index.html` is relative and present,
-  so it will work from the `/URBAN-OUTLAW/` sub-path.
+**What I observed via the API:**
+
+| Commit | Pages run | Result |
+|---|---|---|
+| `0e81ca6` (pre-overhaul) | 42793852545 | **success** — this is what the URL still serves |
+| `3951005` (overhaul) | 42802620634 | `deploy` job **cancelled** by the system after 5m35s |
+| `bf6db81` (docs) | 42803362837 | `build` job **succeeds in 8s**, `deploy` job stays `in_progress` indefinitely |
+
+The Pages *build* step of my commits is fine — it produces the `github-pages` artifact in 8 s.
+The *deploy* step then never completes, so `pages.status` reads `errored` and the public URL
+keeps serving the old build. The only annotation in the run is a generic
+"Node.js 20 deprecated" warning, which also applied to the earlier successful run, so this looks
+like a deployment-side stall rather than anything in the repository.
+
+**Therefore: I could not verify the live site**, and it may still show the pre-overhaul game.
+The sandbox has no outbound access to `*.github.io`, so I cannot check it from here either.
+
+### How to get the new build live (one of these)
+
+1. **Re-run the deployment** — repo → Actions → *pages build and deployment* → latest run →
+   **Re-run all jobs**. That is usually enough to clear a stuck deploy.
+2. **Re-save the Pages source** — Settings → Pages → set Source to
+   *Deploy from a branch*, `arena/89a95d54-urban-outlaw`, `/ (root)` → Save.
+3. **Test locally instead** (works today): `node serve.js`, then open
+   `http://<your-computer-ip>:8080/` on the phone over the same Wi-Fi.
+
+### How to tell the new build from the old one
+
+The new build opens on a cinematic **URBAN OUTLAW** menu with `CONTINUE / NEW GAME / MISSIONS /
+GARAGE / SMARTPHONE / SETTINGS` and a "free roam · chapter one" kicker. The old build opens on a
+plain blue-grey dashboard bar with buttons from the Pixelfork kit. If you see the old one, the
+deploy has not landed yet — a hard refresh will not help until it does.
 
 ## 9. Performance
 
