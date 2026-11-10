@@ -49,6 +49,7 @@ http.createServer((req, res) => {
       'Cache-Control': 'no-cache',
       'Access-Control-Allow-Origin': '*', // the assets loader reads pictures with CORS
     });
+    if (req.method === 'HEAD') { res.end(); return; } // proxies probe with HEAD; never pipe a body for it
     fs.createReadStream(file).pipe(res);
   });
 }).listen(PORT, '0.0.0.0', () => {
