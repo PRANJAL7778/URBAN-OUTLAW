@@ -6,3 +6,4 @@ pixelfork/
 car.js
 package.json
 package-lock.json
+tests/harness/ui_copy.mjs
