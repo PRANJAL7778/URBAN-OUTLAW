@@ -399,3 +399,26 @@ Then open the URL in a browser (desktop Chrome for a quick look, your Android Ch
 
 * **Approval to start V4 development and the graphics upgrade** — I have not started it.
 * Ideally also: one run on your phone with the FPS/draw-call numbers from the Credits panel, so the V4 visual budget is set from data rather than from my estimates.
+
+---
+
+## V3 OVERHAUL (implementation notes)
+
+Stages delivered on top of this audit, without changing the city, car, mission, save or
+audio systems:
+
+1. `src/camera.js` — three rigs (on foot / car / bike) sharing one collision test against
+   `city.colliders`. The smoothed quantity is the camera *distance*, so the lens always sits on
+   the ray that was just tested; walls pull it in immediately and it eases back out at 4.5/s.
+2. `src/ik.js` + `src/pose.js` — two-bone IK and bone aiming. The hero's arms are driven by
+   fractions of each arm's own length (the scan rig has a 0.50 m left arm and a 0.56 m right arm,
+   which the shared clips do not account for). The rider is posed from geometry measured off the
+   bobber (grips in fork space, pegs, seat at 40 % of the wheelbase).
+3. `src/ui.js` + `src/ui.css` — landscape-first HUD with safe-area insets, cinematic main menu,
+   dialogs, and the in-game smartphone (Map / Missions / Contacts / Garage / Settings / Profile).
+   The Pixelfork UI kit is no longer loaded; `main.js` no longer touches `window.SC`.
+4. `src/main.js` — wiring only: UI callbacks, camera rig, pose hooks, phone input lock, and Play
+   gating on real asset readiness. Missions, courier, save keys, collisions, VFX/SFX untouched.
+
+Measured results and the limits of what could be verified here are in
+`TEST_REPORT_V3_OVERHAUL.md`.

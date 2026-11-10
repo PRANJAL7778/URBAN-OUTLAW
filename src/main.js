@@ -9,6 +9,10 @@ import { rigidBody, box, MotionType } from 'crashcat';
 import { createCar } from './car.js';
 import { createWheel } from './wheel.js';
 import { prepareCharacter, prepareScanCharacter } from './character.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { createUI } from './ui.js';
+import { createCameraRig } from './camera.js';
+import { measureBike, createRiderPose, createHeroPose } from './pose.js';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55,1,0.1,180);
@@ -28,7 +32,7 @@ const physics=RAGDOLL.createPhysics({gravity:[0,-9.81,0]});
 /** @type {{office: THREE.Object3D|null, apartment: THREE.Object3D|null}} */
 const importedBuildings={office:null,apartment:null};
 const city=createCity(scene,physics,importedBuildings);
-const diag={car:'loading',bike:'loading',char:'loading'};
+const diag={car:'loading',bike:'loading',char:'loading',seat:'',rider:'',arms:''};
 /** @type {THREE.Object3D|null} */ let charModel=null;
 /** One place that creates the hero: the uploaded character when it is usable, otherwise the original boxy hero. */
 function makeHero(/** @type {number[]} */ position) {
@@ -47,6 +51,21 @@ function disposeHero() {
   hero.dispose(); hero=null; for(const sk of skeletons) sk.dispose();
 }
 
+/** Procedural arm pose for the walking hero (see src/pose.js). Rebuilt whenever the ragdoll model is replaced. */
+let heroPose=/** @type {any} */ (null),heroPoseModel=/** @type {THREE.Object3D|null} */ (null);
+function poseHeroFrame(/** @type {number} */ dt) {
+  if(!hero||state!=='play') return;
+  const m=scene.getObjectByName('ragdoll-model');
+  if(!m) return;
+  if(m!==heroPoseModel) {
+    heroPoseModel=m;
+    const c=CONFIG.character;
+    heroPose=createHeroPose(m,hero,{swing:c.armSwing??1,out:c.armOut??1,handRoll:c.armRoll??0.25});
+    diag.arms=heroPose.ok?'procedural arm swing (both arms)':'arm rig not found - ragdoll clips only';
+    if(!heroPose.ok) heroPose=null;
+  }
+  if(heroPose) heroPose.update(dt);
+}
 function wireHero() {
   if(!hero) return;
   hero.on('jump',()=>SFX.play('move.jump',{volume:0.4}));
@@ -56,42 +75,60 @@ function swapHero() { if(!hero) return; const at=hero.position; disposeHero(); h
 CONFIG.on('palette.hoodie',swapHero); CONFIG.on('character.useModel',swapHero);
 VFX.useScene({scene,camera,renderer,characterHeight:1.8,manual:true}); VFX.attach(); SFX.load('casual'); SFX.attach();
 
- document.body.insertAdjacentHTML('beforeend', `
-<div class="sc-screen" id="uo-menu" data-backdrop="dim"><div class="sc-screen-middle"><h1 class="sc-title" data-color="yellow" data-size="md">URBAN OUTLAW</h1><div class="sc-banner" data-color="blue">FREE ROAM</div><div class="sc-counter" id="uo-best" data-icon="reward.trophy" data-value="0"></div></div><div class="sc-screen-bottom"><button class="sc-button" data-color="green" id="uo-play" data-vfx="ui.pop" disabled>Play</button><div class="sc-popup-actions"><button class="sc-button" data-color="blue" id="uo-settings">Settings</button><button class="sc-button" data-color="dark" id="uo-credits-button">Credits</button></div></div></div>
-<div class="sc-screen" id="uo-hud" hidden><div class="sc-screen-top"><button class="sc-icon-button" id="uo-pause" data-icon="ui.pause" aria-label="Pause"></button><div class="sc-counter" id="uo-score" data-icon="stat.score" data-value="0"></div></div><div class="sc-screen-bottom" data-align="end"><button class="sc-icon-button" id="uo-jump" data-icon="ui.jump" aria-label="Jump" data-size="lg" data-sfx="none"></button></div></div>
-<div class="sc-screen" id="uo-credits" data-backdrop="dim" hidden><div class="sc-screen-middle"><h1 class="sc-title" data-color="yellow">CREDITS</h1><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">URBAN OUTLAW</span></div></div><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">Built with Pixelfork</span></div></div><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">Your uploaded buildings</span></div></div><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title" id="uo-asset-status">Checking models</span></div></div></div><div class="sc-screen-bottom"><button class="sc-button" data-color="blue" id="uo-credits-back">Back</button></div></div>
-<div class="sc-popup" id="uo-paused" data-title="PAUSED" hidden><div class="sc-popup-actions"><button class="sc-button" data-color="green" data-close>Resume</button><button class="sc-button" data-color="blue" id="uo-restart">Restart</button><button class="sc-button" data-color="dark" id="uo-main-menu">Main Menu</button></div></div>
-<div class="sc-popup" id="uo-options" data-title="SETTINGS" hidden><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">Sound</span></div><button class="sc-toggle" id="uo-sound" aria-label="Sound"></button></div><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">Vibration</span></div><button class="sc-toggle" id="uo-vibration" aria-label="Vibration"></button></div><div class="sc-row"><div class="sc-row-body"><span class="sc-row-title">Camera sensitivity</span><div class="sc-slider" id="uo-sensitivity" data-value="100" data-label="percent" aria-label="Camera sensitivity"></div></div></div><div class="sc-popup-actions"><button class="sc-button" data-color="blue" data-close>Back</button></div></div>
-<div id="uo-stick" hidden style="position:fixed;left:18px;bottom:32px;width:128px;height:128px;touch-action:none;z-index:1000"><svg viewBox="0 0 128 128" width="128" height="128" style="pointer-events:none"><circle cx="64" cy="64" r="59" fill="#243644" fill-opacity="0.8" stroke="#e4edf6" stroke-width="3"/><circle id="uo-knob" cx="64" cy="64" r="24" fill="#dce7ef" stroke="#7d9aab" stroke-width="3"/></svg></div>`);
-document.body.insertAdjacentHTML('beforeend', `
-<button class="sc-button" data-color="green" id="uo-drive" data-sfx="none" style="position:fixed;right:22px;bottom:140px;z-index:1001;display:none;min-width:132px;touch-action:manipulation">Drive</button>
-<button class="sc-button" data-color="orange" id="uo-brake" data-sfx="none" style="position:fixed;right:22px;bottom:34px;z-index:1001;display:none;min-width:132px;touch-action:none">BRAKE</button>
-<button id="uo-wheelbtn" aria-label="Quick wheel" style="position:fixed;left:58px;top:10px;z-index:1001;width:42px;height:42px;border-radius:50%;border:0;background:#1689ef;box-shadow:0 3px 0 rgba(0,0,0,.28);display:none;padding:0;touch-action:manipulation"><svg viewBox="-12 -12 24 24" width="24" height="24" style="display:block;margin:9px" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle r="9"/><circle r="2.6" fill="#fff"/><path d="M0 -9 V-3 M9 0 H3 M0 9 V3 M-9 0 H-3"/></svg></button>
-<div id="uo-mission" style="position:fixed;top:74px;left:50%;transform:translateX(-50%);z-index:1001;display:none;padding:6px 16px;border-radius:16px;background:rgba(20,32,48,.86);color:#fff;font:800 15px/1.2 Nunito,system-ui,sans-serif;text-align:center;pointer-events:none;white-space:nowrap"></div>
-<div id="uo-speed" style="position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1001;display:none;padding:4px 14px;border-radius:14px;background:rgba(20,32,48,.7);color:#fff;font:800 14px/1.2 Nunito,system-ui,sans-serif;pointer-events:none"></div>
-<div id="uo-toast" style="position:fixed;top:32%;left:50%;transform:translate(-50%,-50%);z-index:1002;opacity:0;transition:opacity .35s;padding:10px 22px;border-radius:18px;background:rgba(20,32,48,.9);color:#ffe27a;font:900 22px/1.15 Nunito,system-ui,sans-serif;text-align:center;pointer-events:none"></div>`);
 const $=(/** @type {string} */id)=>/** @type {HTMLElement} */(document.getElementById(id));
-$('uo-asset-status').closest('.sc-row')?.insertAdjacentHTML('afterend','<div class="sc-row"><div class="sc-row-body"><div id="uo-diag" style="font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#1d2a38;white-space:pre-wrap;max-height:104px;overflow:auto;text-align:left;touch-action:pan-y"></div></div></div>');
-$('uo-diag').closest('.sc-row')?.insertAdjacentHTML('afterend','<div class="sc-row"><div class="sc-row-body"><div style="font:10.5px/1.35 Nunito,system-ui,sans-serif;color:#1d2a38;text-align:left"><b>Character:</b> “Casual Portrait Of A Man In A Black T‑Shirt” by restore50 (sketchfab.com/restore50). <b>Motorcycle:</b> “Harley-Davidson Custom Bobber - Free” by Tulio Portela (sketchfab.com/TulioPortela). Both CC BY 4.0 (creativecommons.org/licenses/by/4.0). Changes: reduced detail, colours baked in, character rigged, motorcycle split into wheels and fork. Originals unchanged.</div></div></div>');
 let state='menu',score=0,elapsed=0,best=SAVE.get('best',0),before=best,targetIndex=0;
 let mode='walk',yawOffset=0,dragging=false,brakeHeld=false;
-let moveX=0,moveY=0,yaw=0,pitch=0.4,dragX=0,dragY=0;
+let moveX=0,moveY=0,yaw=0,dragX=0,dragY=0;
 let lookLevel=THREE.MathUtils.clamp(Number(SAVE.get('lookLevel',100)),0,100);
-SC.slider.set($('uo-sensitivity'),lookLevel);
-SC.setChecked($('uo-sound'),!AUDIO.muted); SC.setChecked($('uo-vibration'),HAPTICS.enabled);
-AUDIO.onChange(muted=>SC.setChecked($('uo-sound'),!muted));
-$('uo-sound').addEventListener('change',()=>AUDIO.mute(!SC.toggle.get($('uo-sound'))));
-$('uo-vibration').addEventListener('change',()=>HAPTICS.on(SC.toggle.get($('uo-vibration'))));
-$('uo-sensitivity').addEventListener('input',()=> { lookLevel=SC.slider.get($('uo-sensitivity')); SAVE.set('lookLevel',lookLevel); });
-$('uo-sensitivity').addEventListener('change',()=> { lookLevel=SC.slider.get($('uo-sensitivity')); SAVE.set('lookLevel',lookLevel); });
+let qualityMode=SAVE.get('quality','auto');
+let qualityLevel=0;
+const camRig=createCameraRig(camera,city,{
+  sensitivity:1,
+  walkDist:CONFIG.camera.distance, carDist:CONFIG.camera.carDistance ?? 6.2, bikeDist:CONFIG.camera.bikeDistance ?? 5.0,
+});
+/** graphics preset from the settings panel */
+function setQualityLevel(/** @type {string} */ q) {
+  qualityMode=q; SAVE.set('quality',q);
+  if(q==='low') { view.cap=Math.min(0.85,CONFIG.quality.maxPixelRatio); sun.castShadow=false; qualityLevel=2; }
+  else if(q==='high') { view.cap=CONFIG.quality.maxPixelRatio; sun.castShadow=true; qualityLevel=0; }
+  else { view.cap=CONFIG.quality.maxPixelRatio; sun.castShadow=true; qualityLevel=0; }
+  applySize();
+}
+const UI=createUI({
+  onContinue:()=>start(),
+  onNewGame:()=>start(),
+  onMissions:()=> { if(state!=='play') start(); if(state==='play') UI.openPhone('missions'); },
+  onPhoneMenu:()=> { if(state!=='play') start(); if(state==='play') UI.openPhone('home'); },
+  onCredits:()=>only('uo-credits'),
+  onOptions:()=> { if(state!=='play'||loop.paused) return; loop.pause(); ui.playing=false; refreshDriveUi(); },
+  onOptionsClose:()=> { if(state!=='play') return; loop.resume(); refreshDriveUi(); },
+  onResume:()=> { if(state==='play') { loop.resume(); refreshDriveUi(); } },
+  onRestart:()=>start(),
+  onQuit:()=>finish(),
+  onSound:(/** @type {boolean} */ on)=>AUDIO.mute(!on),
+  onVibration:(/** @type {boolean} */ on)=>HAPTICS.on(on),
+  onSensitivity:(/** @type {number} */ v)=> { lookLevel=v; camRig.state.sensitivity=lookSensitivity(); SAVE.set('lookLevel',v); },
+  onQuality:setQualityLevel,
+  onStartCourier:()=> { void startCourier(); },
+  onAbortCourier:()=> { if(courier.s==='active') courierEnd(false,'Job dropped'); },
+  onPhoneOpen:()=> { moveX=moveY=0; brakeHeld=false; dragging=false; ui.playing=false; car.input.throttle=0; car.input.steer=0; car.input.brake=true; release(); refreshDriveUi(); },
+  onPhoneClose:()=> { car.input.brake=false; refreshDriveUi(); },
+  getInfo:()=>wheelInfo(),
+  getSetting:(/** @type {string} */ k)=>k==='sound'?!AUDIO.muted:k==='vibration'?HAPTICS.enabled:k==='sensitivity'?lookLevel:qualityMode,
+});
+/** look sensitivity in radians per pixel, from the settings slider */
+function lookSensitivity() { return CONFIG.camera.sensitivity*(CONFIG.camera.minimumLookFactor+(1-CONFIG.camera.minimumLookFactor)*lookLevel/100); }
+camRig.state.sensitivity=lookSensitivity();
+UI.setBest(best);
+AUDIO.onChange(()=>UI.syncSettings());
+setQualityLevel(qualityMode);
 wireHero();
 function only(/** @type {string} */ id) {
-  SC.tutorial.clear(); VFX.stopAll();
-  for(const s of ['uo-menu','uo-hud','uo-credits']) { if(s===id) SC.screen.show(s); else SC.screen.hide(s); }
-  $('uo-stick').hidden=id!=='uo-hud';
+  UI.clearHint(); VFX.stopAll();
+  UI.screen(id);
   ui.playing=false; refreshDriveUi();
 }
-SC.setValue($('uo-best'),best);
+UI.setBest(best);
 const tokenMat=new THREE.MeshStandardMaterial({color:CONFIG.palette.gold,metalness:0.4,roughness:0.3});
 const token=new THREE.Mesh(new THREE.TorusGeometry(1,0.24,8,20),tokenMat); scene.add(token);
 const beam=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,1,6),new THREE.MeshBasicMaterial({color:'#ffdf72',transparent:true,opacity:0.5})); scene.add(beam);
@@ -102,16 +139,16 @@ function relocate() {
 }
 /** Adds points through the existing score, best-score, saving, haptics and sound path (used by tokens and the mission). */
 function award(/** @type {number} */ points,/** @type {number} */ x,/** @type {number} */ z) {
-  score+=points;SC.setValue($('uo-score'),score);PF.report('score',{score});
+  score+=points;UI.setScore(score);PF.report('score',{score});
   const firstBest=score>before && best===before;
-  if(score>best) { best=score; SAVE.set('best',best); SC.setValue($('uo-best'),best); }
+  if(score>best) { best=score; SAVE.set('best',best); UI.setBest(best); }
   if(firstBest) HAPTICS.success(); else HAPTICS.bump();
   SFX.play('pickup.coin',{volume:0.4});VFX.play('pickup.coin',{position:[x,1,z]});
 }
 
 /* ---------------- Vehicles: Lamborghini (car) + custom bobber (bike) ---------------- */
 const CAR_MODELS={lite:'aiprintgen_light_blue_lamborghini_inspired_supercar_prev_lite',full:'aiprintgen_light_blue_lamborghini_inspired_supercar_prev'}, BIKE_MODEL='bobber_lite';
-let walkPitch=0.4; const FORK_AXIS=new THREE.Vector3(0.423,0.906,0).normalize();
+const FORK_AXIS=new THREE.Vector3(0.423,0.906,0).normalize();
 /** one record per drivable vehicle: its own controller, meshes, parked collider and marker */
 function makeVeh(/** @type {'car'|'bike'} */ kind,/** @type {string} */ markerColor,/** @type {string} */ label) {
   const root=new THREE.Group(), tilt=new THREE.Group(); root.add(tilt); root.visible=false; scene.add(root);
@@ -119,7 +156,7 @@ function makeVeh(/** @type {'car'|'bike'} */ kind,/** @type {string} */ markerCo
   blob.rotation.x=-Math.PI/2; blob.position.y=0.16; root.add(blob);
   const marker=new THREE.Mesh(new THREE.ConeGeometry(0.5,1,4),new THREE.MeshBasicMaterial({color:markerColor})); marker.rotation.x=Math.PI; marker.visible=false; scene.add(marker);
   return { kind, ctrl:createCar(), root, tilt, blob, marker, label, ready:false, /** @type {{id:number}|null} */ parked:null, /** @type {THREE.Object3D|null} */ source:null, /** @type {THREE.Object3D|null} */ wrap:null,
-    pv:{x:0,z:0,h:0}, wheel:0, /** @type {THREE.Vector3|null} */ seat:null, /** @type {THREE.Object3D|null} */ rider:null, /** @type {{rear:THREE.Object3D,front:THREE.Object3D,fork:THREE.Object3D,r:number}|null} */ parts:null, key:/** @type {'car'|'bike'} */ (kind) };
+    pv:{x:0,z:0,h:0}, wheel:0, /** @type {THREE.Vector3|null} */ seat:null, /** @type {THREE.Object3D|null} */ rider:null, /** @type {any} */ riderPose:null, /** @type {THREE.Object3D|null} */ inner:null, /** @type {any} */ bikeGeom:null, steerAngle:0, /** @type {{rear:THREE.Object3D,front:THREE.Object3D,fork:THREE.Object3D,r:number}|null} */ parts:null, key:/** @type {'car'|'bike'} */ (kind) };
 }
 const V={car:makeVeh('car','#46f0a0','Drive'),bike:makeVeh('bike','#ffb13a','Ride')}, VLIST=[V.car,V.bike];
 /** the vehicle being driven (or last driven); `car` always points at its controller */
@@ -136,7 +173,12 @@ function mountVeh(/** @type {typeof V.car} */ v) {
     const b=new THREE.Box3().setFromObject(wrap), c=b.getCenter(new THREE.Vector3());
     inner.position.set(-c.x,-b.min.y,-c.z);
     inner.traverse(o=> { const m=/** @type {THREE.Mesh} */ (o); if(m.isMesh) { m.castShadow=false; m.receiveShadow=false; } });
-    if(v.kind==='bike') { inner.updateMatrixWorld(true); v.seat=inner.localToWorld(new THREE.Vector3(0.34,0.20,0)); } // seat top in the bike's own frame
+    if(v.kind==='bike') { // seat, handlebar grips and foot pegs are measured off the model itself
+      inner.updateMatrixWorld(true);
+      v.seat=inner.localToWorld(new THREE.Vector3(0.34,0.20,0));
+      v.inner=inner;
+      try { v.bikeGeom=measureBike(inner); diag.seat=`seat ${v.bikeGeom.seatInner.y.toFixed(2)} · grips ${v.bikeGeom.gripsFork.length} · pegs ${v.bikeGeom.pegsInner.length}`; } catch(error) { v.bikeGeom=null; console.warn('[bike] geometry measure failed:',error); }
+    }
     if(v.kind==='bike') { const rear=inner.getObjectByName('rearWheel'), front=inner.getObjectByName('frontWheel'), fork=inner.getObjectByName('fork'); if(rear&&front&&fork) v.parts={rear,front,fork,r:0.283*k}; }
   } else if(v.kind==='car') { // simple box car so driving still works if the GLB can not load
     const L=p.length, mat=(/** @type {string} */ col)=>new THREE.MeshStandardMaterial({color:col,roughness:0.6});
@@ -163,7 +205,8 @@ function drawVeh(/** @type {typeof V.car} */ v,/** @type {number} */ alpha,/** @
   if(v.kind==='bike') { // lean into the turn, wheels roll, the fork steers
     v.tilt.rotation.z+=(M.clamp(s.yawRate*s.speed*0.022,-0.5,0.5)-v.tilt.rotation.z)*0.15;
     v.tilt.rotation.x+=(-M.clamp(s.accel*0.004,-0.06,0.06)-v.tilt.rotation.x)*0.12;
-    if(v.parts) { v.parts.rear.rotation.z=v.wheel; v.parts.front.rotation.z=v.wheel; v.parts.fork.quaternion.setFromAxisAngle(FORK_AXIS,M.clamp(-s.steer*0.9,-0.6,0.6)); }
+    if(v.parts) { v.parts.rear.rotation.z=v.wheel; v.parts.front.rotation.z=v.wheel; v.parts.fork.quaternion.setFromAxisAngle(FORK_AXIS,v.steerAngle=M.clamp(-s.steer*0.9,-0.6,0.6)); }
+    if(v.rider&&v.riderPose) { riderTune.steer=v.steerAngle; v.riderPose.update(riderTune); }
   } else {
     v.tilt.rotation.z+=(-M.clamp(s.yawRate*s.speed*0.004,-0.08,0.08)-v.tilt.rotation.z)*0.12;
     v.tilt.rotation.x+=(-M.clamp(s.accel*0.0035,-0.05,0.05)-v.tilt.rotation.x)*0.12;
@@ -180,7 +223,7 @@ function enterVeh(/** @type {typeof V.car} */ target=undefined,/** @type {boolea
   hero.move(0,0); hero.sprint(false); disposeHero(); mode='drive'; cur=v; car=v.ctrl;
   removeParked(v); car.input.throttle=car.input.steer=0; car.input.brake=false; car.s.vx=car.s.vz=car.s.speed=0;
   v.pv.x=car.s.x; v.pv.z=car.s.z; v.pv.h=car.s.h;
-  yawOffset=0; walkPitch=pitch; pitch=0.26; yaw=car.s.h+Math.PI;
+  yawOffset=0; camRig.jump(car.s.h+Math.PI, 0.30); yaw=camRig.state.yaw;
   HAPTICS.tap(); firstMove(); showRider(v,true); if(CONFIG.mission.enabled && mission.s==='idle' && courier.s==='idle') startMission();
   ui.playing=false; refreshDriveUi();
 }
@@ -191,34 +234,46 @@ function exitVeh() {
   for(const o of cands) { const x=s.x+o[0], z=s.z+o[1]; if(!city.colliders.some(b=>x>b.minX-0.6&&x<b.maxX+0.6&&z>b.minZ-0.6&&z<b.maxZ+0.6)) { at=o; break; } }
   s.vx=s.vz=s.speed=0; car.input.throttle=car.input.steer=0; car.input.brake=false; brakeHeld=false;
   showRider(v,false);
-  mode='walk'; hero=makeHero([s.x+at[0],0.3,s.z+at[1]]); wireHero(); parkBody(v); pitch=walkPitch; yaw=s.h+Math.PI;
+  mode='walk'; hero=makeHero([s.x+at[0],0.3,s.z+at[1]]); wireHero(); parkBody(v); camRig.jump(s.h+Math.PI, 0.34); yaw=camRig.state.yaw;
   HAPTICS.tap(); ui.playing=false; refreshDriveUi();
 }
 function resetDriving() {
-  if(mode==='drive') pitch=walkPitch;
   mode='walk'; cur=V.car; car=cur.ctrl;
   for(const v of VLIST) { removeParked(v); showRider(v,false); const sp=v.kind==='bike'?city.bikeSpawn:city.carSpawn; v.ctrl.reset(sp.x,sp.z,sp.heading);
     v.ctrl.input.throttle=v.ctrl.input.steer=0; v.ctrl.input.brake=false; v.pv.x=sp.x; v.pv.z=sp.z; v.pv.h=sp.heading; if(v.ready) parkBody(v); }
   brakeHeld=false; resetMission(); resetCourier(); ui.playing=false; refreshDriveUi();
 }
-/** The rider sits on the bobber: a fresh copy of the rigged scan, posed (thighs forward onto the pegs, torso leaning in, right hand to the bar),
- *  parented to the bike's tilt group so it leans and rolls with it. Falls back to a bike without rider if the scan character is not loaded. */
+/** The rider sits on the bobber. The scan is cloned with its own skeleton, then posed by src/pose.js:
+ *  pelvis on the measured seat, both hands solved onto the measured grips (so they follow the fork),
+ *  feet on the measured pegs. Parented to the tilt group so the whole thing leans and rolls together. */
 const RIDER_SCALE=1.8/1.9;
+/** one shared tune object: no per-frame allocation */
+const riderTune={lean:0.10, elbowOut:0.85, handRoll:0.0, hipLift:0.02, ankleLift:0.075, seatShift:0.09, steer:0};
+/** pull the tuning knobs from CONFIG (registered once, applied live from the mechanics panel) */
+function syncRiderTune() {
+  const r=CONFIG.bike;
+  riderTune.lean=(r.riderLean||0)*0.55; riderTune.elbowOut=r.elbowOut||0.85; riderTune.handRoll=r.handRoll||0;
+  riderTune.hipLift=r.hipLift??0.02; riderTune.ankleLift=r.ankleLift??0.075; riderTune.seatShift=r.seatShift??0.09;
+}
+for(const k of ['bike.riderLean','bike.hipLift','bike.seatShift','bike.ankleLift','bike.elbowOut','bike.handRoll']) CONFIG.on(k,syncRiderTune);
+syncRiderTune();
 function showRider(/** @type {typeof V.car} */ v,/** @type {boolean} */ on) {
   if(v.kind!=='bike') return;
-  if(!on) { if(v.rider) { v.rider.traverse(o=> { const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) mm.skeleton.dispose(); }); v.tilt.remove(v.rider); v.rider=null; } return; } // free the rider's skeleton texture
-  if(v.rider||!v.seat||charKind!=='scan') return;
+  if(!on) { if(v.rider) { v.rider.traverse(o=> { const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) mm.skeleton.dispose(); }); v.tilt.remove(v.rider); v.rider=null; } v.riderPose=null; return; } // free the rider's skeleton texture
+  if(v.rider||!v.bikeGeom||charKind!=='scan') return;
   try {
-    const r=MODELS.model(CHAR_MODELS.scan).scene; r.scale.setScalar(RIDER_SCALE);
-    /** @type {Record<string,THREE.Object3D>} */ const B={}; r.traverse(o=> { if(/** @type {THREE.Bone} */ (o).isBone) B[o.name]=o; const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) { mm.frustumCulled=false; mm.castShadow=false; mm.receiveShadow=false; } });
-    const rp=CONFIG.bike;
-    B.hips.rotation.x=rp.riderTilt; B.spine.rotation.x=rp.riderLean*0.4; B.chest.rotation.x=rp.riderLean*0.6; B.head.rotation.x=-rp.riderLean*0.7;
-    for(const side of ['left','right']) { const sx=side==='left'?1:-1;
-      B[side+'UpperLeg'].rotation.x=-rp.riderThigh; B[side+'UpperLeg'].rotation.z=sx*-0.10; B[side+'LowerLeg'].rotation.x=rp.riderShin; B[side+'Foot'].rotation.x=-0.35; }
-    B.rightUpperArm.rotation.x=-rp.riderArm; B.rightLowerArm.rotation.x=-rp.riderForearm;
-    r.position.set(v.seat.x,v.seat.y+rp.riderLift-0.95*RIDER_SCALE,v.seat.z+rp.riderShift);
-    v.tilt.add(r); v.rider=r;
-  } catch(error) { console.warn('[bike] rider unavailable, riding without one:',error); v.rider=null; }
+    const r=cloneSkeleton(MODELS.model(CHAR_MODELS.scan).scene);
+    r.scale.setScalar(RIDER_SCALE);
+    r.traverse(o=> { const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) { mm.frustumCulled=false; mm.castShadow=false; mm.receiveShadow=false; } });
+    v.tilt.add(r);
+    syncRiderTune();
+
+    const pose=createRiderPose(r,v.bikeGeom,v.tilt);
+    if(!pose.ok) { v.tilt.remove(r); console.warn('[bike] rider rig missing bones:',pose.missing); return; }
+    const lean=pose.calibrate(riderTune);
+    pose.update(riderTune);
+    v.rider=r; v.riderPose=pose; diag.rider=`seated, lean ${lean.toFixed(2)} rad, stretch ${pose.stretch.toFixed(2)}`;
+  } catch(error) { console.warn('[bike] rider unavailable, riding without one:',error); v.rider=null; v.riderPose=null; }
 }
 const ui={near:/** @type {typeof V.car|null} */ (null),playing:false,label:'',kmh:-1};
 function setShown(/** @type {HTMLElement} */ el,/** @type {boolean} */ on,/** @type {string} */ shown='block') { const v=on?shown:'none'; if(el.style.display!==v) el.style.display=v; }
@@ -226,10 +281,11 @@ function refreshDriveUi() {
   const playing=state==='play'&&!loop.paused, driving=playing&&mode==='drive';
   const nv=playing&&mode==='walk'?nearVeh():null, showDrive=driving||!!nv;
   ui.playing=playing; ui.near=nv;
-  const label=driving?'Exit':nv?nv.label:'Drive'; if(label!==ui.label) { ui.label=label; SC.setLabel($('uo-drive'),label); }
-  setShown($('uo-drive'),showDrive); setShown($('uo-brake'),driving); setShown($('uo-speed'),driving); setShown($('uo-wheelbtn'),playing);
-  $('uo-jump').style.display=driving?'none':'';
-  if(!playing) setShown($('uo-mission'),false);
+  UI.setDrive(showDrive?(driving?'Exit':nv?nv.label:'Drive'):null);
+  UI.setBrake(driving); UI.setJump(!driving&&playing);
+  if(!driving) UI.setSpeed(null);
+  setShown($('uo-wheelbtn'),playing);
+  if(!playing) UI.setMission('');
 }
 $('uo-drive').addEventListener('click',()=> { if(mode==='drive') exitVeh(); else enterVeh(); });
 const holdBrake=(/** @type {boolean} */ on)=> () => { brakeHeld=on; };
@@ -340,10 +396,11 @@ function switchVeh(/** @type {'car'|'bike'} */ kind) {
 }
 
 /* ---------------- diagnostics + frame-rate guard (phone friendly) ---------------- */
-let emaMs=16.7,lastFrame=performance.now(),slowMs=0,qualityLevel=0,sunX=1e9,sunZ=1e9;
+let emaMs=16.7,lastFrame=performance.now(),slowMs=0,sunX=1e9,sunZ=1e9;
 function applyQuality() { if(qualityLevel>=1) view.cap=Math.min(view.cap,1); if(qualityLevel>=2) { view.cap=Math.min(view.cap,0.85); sun.castShadow=false; } applySize(); }
 function diagText() {
   const L=[]; L.push('Car: '+diag.car); L.push('Bike: '+diag.bike); L.push('Character: '+diag.char);
+  L.push('Bike fit: '+(diag.seat||'-')+(diag.rider?' · rider '+diag.rider:'')); L.push('Arms: '+(diag.arms||'-'));
   L.push(`FPS ${(1000/emaMs).toFixed(0)} · pixel ratio ${renderer.getPixelRatio().toFixed(2)} · shadows ${sun.castShadow?'on':'off'} · quality level ${qualityLevel}`);
   L.push(`Draw calls ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles}`);
   L.push('Buildings (stack = tall, single = whole model, box = fallback):');
@@ -360,27 +417,21 @@ function start() {
   resetDriving();
   hero=makeHero(city.spawn.toArray()); wireHero();
   score=elapsed=0;before=best;targetIndex=0;moveX=moveY=0;state='play';
-  SC.setValue($('uo-score'),0); only('uo-hud'); loop.resume(); PF.report('started');
-  if(!SAVE.get('tutorialDone',false)) SC.tutorial.point($('uo-stick'),{gesture:'drag',spotlight:false});
+  UI.setScore(0); only('uo-hud'); loop.resume(); PF.report('started'); SAVE.set('started',true); UI.setSave(true);
+  if(!SAVE.get('tutorialDone',false)) UI.hint($('uo-stick'));
 }
-function firstMove() { SC.tutorial.clear(); SAVE.set('tutorialDone',true); }
+function firstMove() { UI.clearHint(); SAVE.set('tutorialDone',true); }
 function finish() {
   if(state==='play') PF.report('gameover',{score});
   state='menu'; release(); resetMission(); resetCourier();
   if(mode==='drive') { resetDriving(); hero=makeHero(city.spawn.toArray()); wireHero(); }
   if(hero) { hero.move(0,0); hero.sprint(false); }
-  SC.setValue($('uo-best'),best);
-  SC.popup.close('uo-paused'); only('uo-menu'); loop.resume();
+  UI.setBest(best);
+  UI.pause(false); only('uo-menu'); loop.resume();
 }
-$('uo-play').addEventListener('click',start);
-$('uo-settings').addEventListener('click',()=> { SC.setChecked($('uo-vibration'),HAPTICS.enabled); SC.popup.open('uo-options'); });
-$('uo-credits-button').addEventListener('click',()=>only('uo-credits'));
-$('uo-credits-back').addEventListener('click',()=>only('uo-menu'));
-$('uo-restart').addEventListener('click',()=> { SC.popup.close('uo-paused'); start(); });
-$('uo-main-menu').addEventListener('click',finish);
-$('uo-pause').addEventListener('click',()=>{ firstMove(); moveX=moveY=0;brakeHeld=false;loop.pause();refreshDriveUi();SC.popup.open('uo-paused'); });
-$('uo-paused').addEventListener('close',()=> { if(state==='play') loop.resume(); });
-function jump() { if(state!=='play'||loop.paused||mode==='drive'||!hero)return; firstMove();HAPTICS.tap();hero.jump(); }
+$('uo-pause').addEventListener('click',()=>{ firstMove(); moveX=moveY=0;brakeHeld=false;release();loop.pause();ui.playing=false;refreshDriveUi();UI.pause(true); });
+$('uo-phone-btn').addEventListener('click',()=>{ if(state==='play'&&!loop.paused) UI.openPhone('home'); });
+function jump() { if(state!=='play'||loop.paused||mode==='drive'||!hero||UI.phoneOpen())return; firstMove();HAPTICS.tap();hero.jump(); }
 $('uo-jump').addEventListener('pointerdown',jump);
 const stick=$('uo-stick');
 /** @param {PointerEvent} e */
@@ -394,13 +445,15 @@ stick.addEventListener('pointermove',e=>{if(stick.hasPointerCapture(e.pointerId)
 function release() {moveX=moveY=0;$('uo-knob').setAttribute('cx','64');$('uo-knob').setAttribute('cy','64');}
 stick.addEventListener('pointerup',release);stick.addEventListener('pointercancel',release);
 INPUT.onDrag((dx,dy,phase)=> {
-  if(state!=='play'||loop.paused)return;
+  if(state!=='play'||loop.paused||UI.phoneOpen())return;
   firstMove();
   if(phase==='start'){dragX=dx;dragY=dy;dragging=true;return;}
   if(phase==='end'){dragging=false;return;}
-  const sensitivity=CONFIG.camera.sensitivity*(CONFIG.camera.minimumLookFactor+(1-CONFIG.camera.minimumLookFactor)*lookLevel/100);
-  if(mode==='drive') yawOffset-=(dx-dragX)*sensitivity; else yaw-=(dx-dragX)*sensitivity;
-  pitch=THREE.MathUtils.clamp(pitch+(dy-dragY)*sensitivity,0.15,1.1);dragX=dx;dragY=dy;
+  // sensitivity comes from the settings slider, so a slow phone does not spin the camera
+  const ddx=(dx-dragX)*camRig.state.sensitivity, ddy=(dy-dragY)*camRig.state.sensitivity;
+  if(mode==='drive') yawOffset-=ddx; else camRig.drag(dx-dragX, 0, elapsed*1000);
+  camRig.pitchTilt(dy-dragY);
+  dragX=dx;dragY=dy;
 });
 INPUT.onKey('Space',jump);
 /* ---------------- quick wheel ---------------- */
@@ -427,33 +480,34 @@ const wheel=createWheel({
 $('uo-wheelbtn').addEventListener('click',()=> wheel.open());
 INPUT.onKey('KeyQ',()=> { if(wheel.isOpen()) wheel.close(); else wheel.open(); });
 
-const look=new THREE.Vector3(),desired=new THREE.Vector3(),ray=new THREE.Raycaster(),rayHits=/** @type {THREE.Intersection[]} */ ([]);
 const loop=startLoop({
   update(dt) {
-    let x=moveX,y=moveY;
-    if(state==='play') {
+    const blocked=UI.phoneOpen();               // the phone swallows movement and vehicle input
+    let x=blocked?0:moveX,y=blocked?0:moveY;
+    if(state==='play'&&!blocked) {
       const k=INPUT.axis();if(INPUT.key('KeyW')||INPUT.key('KeyA')||INPUT.key('KeyS')||INPUT.key('KeyD')||INPUT.key('ArrowUp')||INPUT.key('ArrowDown')||INPUT.key('ArrowLeft')||INPUT.key('ArrowRight')) {x=k.x;y=k.y;firstMove();}
       if(mode==='drive') {
         cur.pv.x=car.s.x; cur.pv.z=car.s.z; cur.pv.h=car.s.h;
-        car.input.throttle=-y; car.input.steer=x; car.input.brake=brakeHeld||INPUT.key('Space');
+        car.input.throttle=-y; car.input.steer=x; car.input.brake=blocked?true:(brakeHeld||INPUT.key('Space'));
         const hit=car.update(dt,P(cur),city.colliders,city.isRoad);
         if(cur.parts) cur.wheel+=car.s.speed*dt/cur.parts.r; // wheel roll comes from the simulated distance, so it is exact at any frame rate
         if(hit>4) { HAPTICS.bump(); SFX.play('impact.punch',{volume:Math.min(0.6,hit/30)}); }
-        // chase camera: follows the car's heading; a swipe adds an offset that eases back
-        let d=car.s.h+Math.PI+yawOffset-yaw; d=Math.atan2(Math.sin(d),Math.cos(d)); yaw+=d*(1-Math.exp(-5*dt));
-        if(!dragging) { yawOffset*=Math.exp(-1.1*dt); pitch+=(0.26-pitch)*(1-Math.exp(-1.5*dt)); }
+        // a swipe adds a temporary orbit offset that eases back to the chase position
+        if(!dragging) yawOffset*=Math.exp(-1.4*dt);
       } else if(hero) {
+        yaw=camRig.state.yaw;
         hero.move((x*Math.cos(yaw)+y*Math.sin(yaw))*CONFIG.player.strength,(-x*Math.sin(yaw)+y*Math.cos(yaw))*CONFIG.player.strength);
         hero.sprint(Math.hypot(x,y)>=CONFIG.player.runThreshold);
       }
     } else if(hero) {hero.move(0,0);hero.sprint(false);}
+    if(blocked&&hero) {hero.move(0,0);hero.sprint(false);} // the phone freezes the hero even if a stick push was queued that frame
     physics.step(dt);VFX.update(dt);
     if(hero && hero.position[1]<CONFIG.player.recoveryDepth) {disposeHero();hero=makeHero(city.spawn.toArray());wireHero();}
     const driving=mode==='drive', px=driving?car.s.x:hero?hero.position[0]:0, pz=driving?car.s.z:hero?hero.position[2]:0, py=driving||!hero?0:hero.position[1];
     if(state==='play') {
       elapsed+=dt;
       if((!driving?nearVeh():null)!==ui.near || !ui.playing) refreshDriveUi();
-      if(driving) { const kmh=Math.round(Math.abs(car.s.speed)*3.6); if(kmh!==ui.kmh) { ui.kmh=kmh; $('uo-speed').textContent=kmh+' km/h'; } }
+      if(driving) { const kmh=Math.round(Math.abs(car.s.speed)*3.6); if(kmh!==ui.kmh) { ui.kmh=kmh; UI.setSpeed(kmh); } }
       const p=city.spots[targetIndex];
       if(Math.hypot(px-p.x,pz-p.z)<CONFIG.hunt.radius+(driving?1.4:0) && py<3) { award(CONFIG.hunt.points,p.x,p.z); relocate(); }
       updateMission(dt,px,pz); updateCourier(dt,px,pz);
@@ -465,23 +519,24 @@ const loop=startLoop({
   },
   render(alpha) {
     physics.sync(alpha);
+    if(mode==='walk') poseHeroFrame(Math.min(100,performance.now()-lastFrame)/1000);
     const now=performance.now(), ft=now-lastFrame; lastFrame=now;
     if(ft<250) emaMs+=(Math.min(ft,100)-emaMs)*0.05;
     if(state==='play'&&!loop.paused&&elapsed>3&&CONFIG.quality.autoQuality&&qualityLevel<2) { // slow phone: lower resolution first, then drop the shadow
       if(emaMs>42) slowMs+=ft; else slowMs=Math.max(0,slowMs-ft*2);
       if(slowMs>4000) { qualityLevel++; slowMs=0; applyQuality(); }
     } else slowMs=0;
-    let lx=look.x,ly=look.y,lz=look.z,dist=CONFIG.camera.distance;
-    for(const v of VLIST) if(v.ready) drawVeh(v,alpha,Math.min(ft,100)/1000);
-    if(mode==='drive') { const pc=P(cur); lx=cur.root.position.x; ly=pc.cameraHeight; lz=cur.root.position.z; dist=pc.cameraDistance+Math.min(3,Math.abs(car.s.speed)*0.07); }
-    else if(hero) { const p=hero.drawPosition; lx=p[0]; ly=p[1]+CONFIG.camera.height; lz=p[2]; }
+    const dtf=Math.min(ft,100)/1000;
+    for(const v of VLIST) if(v.ready) drawVeh(v,alpha,dtf);
+    let lx=0,lz=0;
+    if(mode==='drive' && cur) {
+      lx=cur.root.position.x; lz=cur.root.position.z;
+      camRig.update(dtf,{mode:cur.kind==='bike'?'bike':'car',x:lx,z:lz,y:cur.root.position.y,heading:car.s.h+yawOffset,speed:Math.abs(car.s.speed),steer:car.s.steer,now});
+    } else if(hero) {
+      const p=hero.drawPosition; lx=p[0]; lz=p[2];
+      camRig.update(dtf,{mode:'walk',x:p[0],z:p[2],y:p[1],heading:hero.facing,speed:hero.speed,sprint:hero.speed>5.2,now});
+    }
     if(Math.abs(lx-sunX)>6||Math.abs(lz-sunZ)>6) { sunX=Math.round(lx/6)*6; sunZ=Math.round(lz/6)*6; sun.target.position.set(sunX,0,sunZ); sun.position.set(sunX+15,35,sunZ+12); } // shadow follows the player
-    look.set(lx,ly,lz);
-    desired.set(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
-    ray.set(look,desired);ray.far=dist; rayHits.length=0; ray.intersectObjects(city.obstacles,false,rayHits);
-    const hit=rayHits[0];
-    desired.multiplyScalar(hit?Math.max(0.5,hit.distance-0.4):dist).add(look);
-    camera.position.lerp(desired,mode==='drive'?1-Math.exp(-14*Math.min(ft,100)/1000):1-Math.exp(-CONFIG.camera.smoothing/60));camera.lookAt(look);
     renderer.render(scene,camera);
   },
 });
@@ -507,9 +562,10 @@ async function loadBuilding(kind,name) {
   const office=await loadBuilding('office','low_poly_city_office_building_low_2');
   const apartment=await loadBuilding('apartment','low_poly_city_apartment_building_low_2');
   city.refreshBuildings();
-  SC.setLabel($('uo-asset-status'),`Office: ${office?'loaded':'unavailable'} · Apartments: ${apartment?'loaded':'unavailable'}`);
-  $('uo-play').removeAttribute('disabled');
-  loadExtras();
+  UI.setAssetStatus(`Office: ${office?'loaded':'unavailable'} · Apartments: ${apartment?'loaded':'unavailable'}`);
+  UI.bootNote('Loading vehicles and character…');
+  await loadExtras();
+  UI.ready(true); UI.setSave(!!SAVE.get('started',false));
 })();
 /** Fresh copy of the uploaded character, mapped to the ragdoll and (optionally) dressed. */
 const CHAR_MODELS={scan:'char_scan_lite',mannequin:'characterrigged'}; /** @type {'scan'|'mannequin'} */ let charKind='mannequin';

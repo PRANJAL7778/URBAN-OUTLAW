@@ -1,0 +1,138 @@
+URBAN OUTLAW V3 — GAMEPLAY, CHARACTER ANIMATION & UI OVERHAUL
+===========================================================================
+This is an upgrade of the working V3 build, not a rebuild. City, cars, missions,
+saving, audio, controls and assets are all still there; the changes below are
+additive or replace specific broken pieces.
+
+The untouched pre-overhaul build is archived at:
+  backup/urban_outlaw_v3_working_build.zip      (git tag: v3-working-baseline)
+and the original V2/V3 archive is still at backup/urban_outlaw_v3_project.zip.
+
+
+1. LANDSCAPE LAYOUT, SAFE AREAS, ROTATE HINT
+---------------------------------------------------------------------------
+* New src/ui.css — landscape-first interface, one stylesheet, no external fonts.
+* All HUD edges now use env(safe-area-inset-*) with 14 px fallbacks, so the
+  joystick, action buttons, pause button and speed readout sit clear of Android
+  gesture navigation and rounded corners.
+* Portrait is supported (the phone, menu and HUD re-flow) and a dismissible
+  "rotate for the full view" hint appears in portrait instead of blocking play.
+* Joystick kept at 128 px so its centre maths still matches the old layout;
+  the knob is a DOM SVG circle, unchanged in behaviour.
+
+
+2. THREE SEPARATE CAMERA SYSTEMS  (src/camera.js — new)
+---------------------------------------------------------------------------
+* On foot: smooth follow from behind/above, touch-drag to orbit, pitch clamped
+  0.10–1.05 rad, distance clamped 2.2–6.5 m, sensitivity from Settings, gentle
+  auto-align behind the hero only after 1.1 s without a drag.
+* Car: chase camera that trails the heading (rate rises with speed), shows the
+  road ahead by looking 6.5–11.5 m forward, and grows 6.2 → 7.7 m with speed.
+* Motorcycle: separate closer chase camera (5.0 → 6.0 m), looks further ahead,
+  and never rolls the horizon (camera.up is always world up, tested).
+* Anti-clipping: the distance — not the position — is smoothed, so the lens always
+  sits on the ray that was just tested against the building boxes; a wall can pull
+  the camera in immediately (no see-through) and it eases back out at 4.5/s.
+* Mode switches snap once (camRig.jump) instead of flying across the map.
+
+
+3. CHARACTER ARMS  (src/ik.js + src/pose.js — new)
+---------------------------------------------------------------------------
+The rig was measured first, not guessed:
+  left arm 0.50 m, right arm 0.56 m, shoulders at x +0.13 / -0.25, bone length
+  axis -Y, elbows flexing correctly in every clip.
+So the problem was not placement, it was that the shared ragdoll clips assume a
+symmetric rig. The fix is a procedural arm pass for the walking hero:
+* two-bone IK from the real shoulder positions, with every offset expressed as a
+  fraction of that arm's own length, so a 0.50 m arm and a 0.56 m arm swing the
+  same way (measured: identical 0.720 swing range on both sides);
+* per-state poses: idle (small breathing swing), run, sprint, and a symmetric
+  two-arms-up air pose (no alternation while airborne);
+* elbows keep a human angle in every state, hands stay outside the torso;
+* hands are re-oriented so the fingers continue the forearm (no twisted wrist).
+Legs, spine, landing squash and the ragdoll physics are untouched.
+
+
+4. MOTORCYCLE RIDING POSE  (src/pose.js)
+---------------------------------------------------------------------------
+* The bike is measured from its own geometry at mount time: handlebar grips (in
+  the fork's own space, so they follow the steering), foot pegs, and the seat
+  (40% of the wheelbase behind the front axle, at the top surface).
+* The rider is a SkeletonUtils clone with its own skeleton, so the hero's model
+  is never reparented (the old code moved the shared scene into the bike).
+* Pose: pelvis on the seat (measured seat + 0.02 m/0.09 m forward), both hands
+  solved onto the measured grips, fingers wrapped across the bar, feet on the
+  pegs with the ankle 0.075 m above them, torso lean calibrated once so the arms
+  actually reach the low bars (0.64 rad here, ≤ 5% arm extension).
+* Hands follow the fork as it steers (measured 0 mm error at rest, ≤ 3 cm at full
+  lock), and the chest rotates with the steering like a real rider.
+* Mount/dismount unchanged in behaviour; the rider is disposed with its skeleton
+  on dismount (no leak).
+
+
+5. MAIN MENU  (src/ui.js — new)
+---------------------------------------------------------------------------
+Cinematic landscape menu over the live city: title block, and six items —
+Continue, New Game, Missions, Garage (coming soon), Smartphone, Settings.
+* Continue/Missions stay disabled until the city, both vehicles and the hero are
+  actually loaded (the button says "loading world…" and shows the boot status).
+* New Game asks for confirmation; best score and courier records are kept.
+* Settings are real: sound, vibration, camera sensitivity, and a graphics preset
+  (Auto / Low / High) that drives pixel ratio and shadows live.
+* Credits screen keeps the CC BY 4.0 attribution and the diagnostics dump.
+
+
+6. IN-GAME SMARTPHONE  (src/ui.js)
+---------------------------------------------------------------------------
+Opens from the HUD PHONE button or the menu; closes with ✕, Escape or a tap
+outside, with a scale/fade animation. Apps: Map, Missions, Contacts (coming
+soon), Garage (coming soon), Settings, Profile.
+* Map: live top-down canvas of the blocks, roads, parked vehicles, objective and
+  the player arrow, refreshed 2.5×/s while open.
+* Missions: real courier start/drop actions and the delivery-run status.
+* Settings: same controls as the pause menu, kept in sync.
+* Profile: tokens, best score, courier runs, session time.
+* While the phone is open, movement, jump, drag-look and vehicle throttle are
+  blocked and the car brakes, so the player cannot drive off behind the panel.
+  The world keeps simulating (no hard freeze).
+
+
+7. BOOT AND FIRST-SCREEN FIXES  (found by actually executing main.js headlessly)
+---------------------------------------------------------------------------
+* Fixed a boot-order crash: the graphics preset was applied before its state
+  variable existed, so the module threw during start-up and the game never began.
+  This was the one defect that would have shown as "black screen" on a phone.
+* The main menu is now shown by the UI itself at boot. Before this the menu only
+  appeared after the player had already left it, so a first visit could show an
+  empty screen while the city loaded behind it.
+* Settings opened from the menu now pauses the game and closing it resumes —
+  previously it could leave the simulation frozen with no way back.
+* The phone now also cancels a joystick push in the same frame it opens, so the
+  hero cannot coast a few metres while the panel is being read.
+
+8. FILES
+---------------------------------------------------------------------------
+new:      src/ui.js, src/ui.css, src/camera.js, src/ik.js, src/pose.js
+changed:  src/main.js   (UI wiring, camera rig, pose hooks, rider, phone input
+                        lock, Play gating, quality presets; gameplay untouched)
+          src/config.js (camera.carDistance/bikeDistance, character.armSwing/
+                        armOut/armRoll, bike.hipLift/seatShift/ankleLift/
+                        elbowOut/handRoll; the obsolete manual rider angles
+                        riderLift/Shift/Tilt/Thigh/Shin/Arm/Forearm removed)
+          index.html    (loads src/ui.css; the 234 KB Pixelfork UI kit is no
+                        longer loaded — nothing depended on it)
+untouched: src/city.js, src/car.js, src/character.js, src/vehicles.js,
+          src/wheel.js, assets/*, packs/*, game.json, serve.js
+
+
+KNOWN LIMITS (see TEST_REPORT_V3_OVERHAUL.md)
+---------------------------------------------------------------------------
+* No browser or real-Android run was possible in this environment; everything
+  below was verified headlessly. Please check the feel on the phone.
+* The scan rig itself is asymmetric (one arm is 6 cm longer); the animation is
+  equalised, the mesh is not re-rigged.
+* At a wall corner the walking camera can pull in by up to ~2.5 m in one frame
+  (it would rather move than show through the wall). Car and bike cameras never
+  snap.
+* Contacts and Garage are deliberately marked coming soon instead of shipping
+  empty screens.
