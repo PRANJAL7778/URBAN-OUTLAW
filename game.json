@@ -1,0 +1,14 @@
+{
+  "name": "URBAN OUTLAW",
+  "kind": "3d",
+  "skeleton": 1,
+  "packs": {
+    "render-3d": "three@0.186.0",
+    "physics-3d": "crashcat@0.0.5",
+    "audio": "howler@2.2.4",
+    "vfx": "pixelfork-vfx@0.8.1-A",
+    "sfx": "pixelfork-sfx@0.9.0-A",
+    "ui": "clean-flat@0.3.0-A",
+    "character": "pixelfork-ragdoll@0.9.7-A"
+  }
+}

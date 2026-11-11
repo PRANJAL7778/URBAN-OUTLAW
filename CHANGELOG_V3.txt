@@ -1,0 +1,27 @@
+URBAN OUTLAW V3 - character + motorcycle + mission + quick wheel
+(V2 is kept untouched as a separate build; every V2 feature is still tested and working.)
+
+NEW ASSETS (derived copies; your uploaded originals are NOT included and were not modified)
+  assets/char_scan_lite.glb   26k tris, 0.9 MB: the scanned man, colours baked into vertices, rigged to a 16-bone humanoid skeleton
+  assets/bobber_lite.glb      28k tris, 0.7 MB: the bobber split into body, rear wheel, front fork and front wheel
+  (originals were 253k and 226k triangles, 18 MB and 15 MB)
+
+NEW / CHANGED CODE
+  src/main.js      vehicle registry (Lamborghini + bobber), rider, courier mission, quick wheel wiring, hero disposal fix
+  src/city.js      bobber spawn point, courier route points
+  src/config.js    bike.*, courier.*, character.model
+  src/car.js       per-vehicle collision circles (radius / span)
+  src/character.js scan-character preparation (mannequin path unchanged)
+  src/wheel.js     NEW: circular menu with Map, Phone, Vehicles, Missions
+  tools/           the asset pipeline (decimate, bake, rig, split) used to make the lite files
+
+FEATURES
+  Character: scanned man is the protagonist (mannequin V2 hero and boxy hero stay as fallbacks).
+  Bobber: Ride button, wheels roll with the distance travelled, fork steers, leans into turns, rider seated on it, collisions, safe dismount.
+  Courier Run: pick up on foot (+100) -> deliver by vehicle (+300, 50 s) -> final run (+400, 28 s). Replayable, saved stats.
+  Quick wheel (button next to pause, or Q): Map, Phone (Dispatch / Garage / Stats), Vehicles (call / switch), Missions.
+
+CREDITS (CC BY 4.0, also shown in the in-game Credits screen)
+  "Casual Portrait Of A Man In A Black T-Shirt" by restore50 - https://sketchfab.com/restore50
+  "Harley-Davidson Custom Bobber - Free" by Tulio Portela - https://sketchfab.com/TulioPortela
+  Changes: reduced detail, colours baked into vertices, character rigged, motorcycle split into wheels and fork.
