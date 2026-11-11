@@ -22,6 +22,10 @@ const check = (n, ok, extra = '') => { ok ? pass++ : fail++; console.log(`  ${ok
 const dom = new JSDOM('<!doctype html><html><body><div id="game"></div></body></html>', { pretendToBeVisual: true, url: 'https://game.test/' });
 const { window } = dom;
 global.window = window; global.document = window.document;
+/* GLTFLoader reads embedded texture images through `self.URL.createObjectURL`. A real browser always
+   has `self`; jsdom does not, so the suit character's textures failed to load in this harness only.
+   Point `self` at the jsdom window (same realm as its Blob/URL), not at globalThis. */
+global.self = window;
 try { Object.defineProperty(global, 'navigator', { value: window.navigator, configurable: true }); } catch {}
 global.innerWidth = 900; global.innerHeight = 400; global.devicePixelRatio = 2;
 window.innerWidth = 900; window.innerHeight = 400; window.devicePixelRatio = 2;
@@ -99,6 +103,7 @@ export const __t = {
   heroPose: () => (heroPose ? heroPose.ok : null), city: () => city, ui: () => UI,
   enterVeh: (k, force) => enterVeh(V[k], force), exitVeh: () => exitVeh(),
   courier: () => ({ s: courier.s, stage: courier.stage }), mission: () => ({ s: mission.s }),
+  dismount: () => ({ pending: !!dismountVeh, t: dismountT, hero: !!hero, rider: !!V.bike.rider }),
 };
 `;
 fs.writeFileSync(HERE + '/src/__main_boot.mjs', src);
@@ -134,12 +139,12 @@ check('main.js mounted the renderer canvas into #game', !!canvas);
 await settle(500);                                     // let the async boot chain (buildings, car, bike, character) finish
 console.log('\n=== BOOT + GAMEPLAY ===');
 check('the scene, HUD and menu are built', !!$('uo-ui') && on($('uo-menu')));
-check('boot loaded the real car + bobber + scan character',
-  ['aiprintgen_light_blue_lamborghini_inspired_supercar_prev_lite', 'bobber_lite', 'char_scan_lite'].every(id => assetState.loaded.includes(id)),
+check('boot loaded the real car + bobber + suit character',
+  ['aiprintgen_light_blue_lamborghini_inspired_supercar_prev_lite', 'bobber_lite', 'male_character_in_suit'].every(id => assetState.loaded.includes(id)),
   assetState.loaded.length + ' models');
 check('both vehicles report ready with real parts', S.veh('car').ready && S.veh('bike').ready && S.veh('bike').parts,
-  'bike parts=' + S.veh('bike').parts + ' seat/grips measured=' + /seat/.test(S.diag().seat || ''));
-check('the hero is the scan character with working arm poses', /scan/.test(S.diag().char), S.diag().char.slice(0, 46));
+  'bike parts=' + S.veh('bike').parts + ' saddle/grips/pegs measured=' + /saddle/.test(S.diag().seat || '') + ' · ' + S.diag().seat);
+check('the hero is the suit character', /suit character/.test(S.diag().char), S.diag().char.slice(0, 60));
 
 /* ---- Play gating ---- */
 const play = $('uo-play');
@@ -164,6 +169,7 @@ const start = S.heroPos();
 tap(stick, 'pointerdown', 200 + 20, 200 - 55);
 for (let i = 0; i < 40; i++) frame();
 const walked = dist(S.heroPos(), start);
+check('the walking hero gets a procedural arm pose from the suit rig', S.heroPose() === true, 'arms=' + S.heroPose());
 check('the joystick walks the hero', walked > 0.6, walked.toFixed(2) + ' m');
 check('the joystick knob follows the finger', Math.abs(Number($('uo-knob').getAttribute('cy')) - 64) > 10);
 tap(stick, 'pointerup');
@@ -259,13 +265,23 @@ S.enterVeh('bike', true);
 frame();
 check('the bobber can be ridden', S.mode() === 'drive' && S.veh('bike').rider && S.veh('bike').pose,
   'rider=' + S.veh('bike').rider + ' pose=' + S.veh('bike').pose + ' · ' + (S.diag().rider || 'no diag'));
+/* the seated pose is reached through the mount blend, so let it play before checking */
+for (let i = 0; i < 40; i++) frame();
 check('the rider is seated on measured geometry', /seated/.test(S.diag().rider || ''), S.diag().rider);
 tap(stick, 'pointerdown', 240, 140);
 for (let i = 0; i < 60; i++) frame();
 check('the bobber moves under throttle', Math.abs(S.carSpeed()) > 1, S.carSpeed().toFixed(2) + ' m/s');
 tap(stick, 'pointerup');
 S.exitVeh(); frame();
-check('dismounting frees the rider clone', S.mode() === 'walk' && !S.veh('bike').rider);
+/* dismounting is an animated blend now, not a teleport: the rider stays on the bike while it
+   plays, then is handed back to the walking ragdoll */
+check('dismounting starts a blend and keeps the rider aboard while it plays',
+  S.mode() === 'walk' && S.veh('bike').rider && S.dismount().pending,
+  'rider=' + S.veh('bike').rider + ' pending=' + S.dismount().pending);
+for (let i = 0; i < 40; i++) frame();
+check('the rider is handed back to the walker when the blend finishes',
+  S.mode() === 'walk' && !S.veh('bike').rider && !S.dismount().pending && S.dismount().hero,
+  'rider=' + S.veh('bike').rider + ' pending=' + S.dismount().pending + ' hero=' + S.dismount().hero);
 
 /* ---- stability: a long run of live frames ---- */
 let frameError = null;

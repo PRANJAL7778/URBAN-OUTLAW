@@ -8,11 +8,12 @@ import { MODELS } from '../pixelfork/assets-3d.js';
 import { rigidBody, box, MotionType } from 'crashcat';
 import { createCar } from './car.js';
 import { createWheel } from './wheel.js';
-import { prepareCharacter, prepareScanCharacter } from './character.js';
+import { prepareCharacter, prepareScanCharacter, prepareSuitCharacter } from './character.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { createUI } from './ui.js';
 import { createCameraRig } from './camera.js';
-import { measureBike, createRiderPose, createHeroPose } from './pose.js';
+import { measureBike, createHeroPose } from './pose.js';
+import { createRiderPose, measureSaddle } from './riderpose.js';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(55,1,0.1,180);
@@ -29,6 +30,9 @@ scene.add(new THREE.HemisphereLight('#eff9ff','#65864d',2));
 const sun=new THREE.DirectionalLight('#fff1d8',2.5); sun.position.set(15,35,12); sun.castShadow=true;
 sun.shadow.mapSize.set(1024,1024); Object.assign(sun.shadow.camera,{left:-38,right:38,top:38,bottom:-38,near:1,far:100}); sun.shadow.normalBias=0.04; scene.add(sun); scene.add(sun.target);
 const physics=RAGDOLL.createPhysics({gravity:[0,-9.81,0]});
+/** The ragdoll's visual root: 'ragdoll-model' when a real model was supplied, 'ragdoll' for the
+ *  built-in boxy body. Both are the object the riding pose can take over. */
+const ragdollRoot=()=>scene.getObjectByName('ragdoll-model')||scene.getObjectByName('ragdoll');
 /** @type {{office: THREE.Object3D|null, apartment: THREE.Object3D|null}} */
 const importedBuildings={office:null,apartment:null};
 const city=createCity(scene,physics,importedBuildings);
@@ -47,7 +51,7 @@ function makeHero(/** @type {number[]} */ position) {
 /** Disposes the hero and frees the skeleton textures the ragdoll leaves behind (keeps GPU memory flat over many mounts/dismounts). */
 function disposeHero() {
   if(!hero) return;
-  /** @type {THREE.Skeleton[]} */ const skeletons=[]; scene.traverse(o=> { if(o.name==='ragdoll-model') o.traverse(n=> { const sm=/** @type {THREE.SkinnedMesh} */ (n); if(sm.isSkinnedMesh) skeletons.push(sm.skeleton); }); });
+  /** @type {THREE.Skeleton[]} */ const skeletons=[]; const rm=ragdollRoot(); if(rm) rm.traverse(n=> { const sm=/** @type {THREE.SkinnedMesh} */ (n); if(sm.isSkinnedMesh) skeletons.push(sm.skeleton); });
   hero.dispose(); hero=null; for(const sk of skeletons) sk.dispose();
 }
 
@@ -55,7 +59,7 @@ function disposeHero() {
 let heroPose=/** @type {any} */ (null),heroPoseModel=/** @type {THREE.Object3D|null} */ (null);
 function poseHeroFrame(/** @type {number} */ dt) {
   if(!hero||state!=='play') return;
-  const m=scene.getObjectByName('ragdoll-model');
+  const m=ragdollRoot();
   if(!m) return;
   if(m!==heroPoseModel) {
     heroPoseModel=m;
@@ -177,7 +181,19 @@ function mountVeh(/** @type {typeof V.car} */ v) {
       inner.updateMatrixWorld(true);
       v.seat=inner.localToWorld(new THREE.Vector3(0.34,0.20,0));
       v.inner=inner;
-      try { v.bikeGeom=measureBike(inner); diag.seat=`seat ${v.bikeGeom.seatInner.y.toFixed(2)} · grips ${v.bikeGeom.gripsFork.length} · pegs ${v.bikeGeom.pegsInner.length}`; } catch(error) { v.bikeGeom=null; console.warn('[bike] geometry measure failed:',error); }
+      try {
+        const raw=measureBike(inner);
+        /* measureBike()'s seat rule (40% of the wheelbase) lands on the TANK of this bobber, so the
+           saddle is re-measured from the up-facing surface. Everything is expressed in the tilt
+           group's space, which is the rider's parent. */
+        const saddle=measureSaddle(v.tilt,inner);
+        const forkNode=inner.getObjectByName('fork');
+        const toTilt=(p)=>v.tilt.worldToLocal(forkNode?p.clone().applyMatrix4(forkNode.matrixWorld):p.clone().applyMatrix4(inner.matrixWorld));
+        v.bikeGeom={ seat:saddle.seat, profile:saddle.profile,
+          grips:raw.gripsFork.map(toTilt),
+          pegs:raw.pegsInner.map((q)=>v.tilt.worldToLocal(q.clone().applyMatrix4(inner.matrixWorld))) };
+        diag.seat=`saddle ${saddle.seat.y.toFixed(2)}m@z${saddle.seat.z.toFixed(2)} · grips ${v.bikeGeom.grips.length} · pegs ${v.bikeGeom.pegs.length}`;
+      } catch(error) { v.bikeGeom=null; console.warn('[bike] geometry measure failed:',error); }
     }
     if(v.kind==='bike') { const rear=inner.getObjectByName('rearWheel'), front=inner.getObjectByName('frontWheel'), fork=inner.getObjectByName('fork'); if(rear&&front&&fork) v.parts={rear,front,fork,r:0.283*k}; }
   } else if(v.kind==='car') { // simple box car so driving still works if the GLB can not load
@@ -203,10 +219,15 @@ function drawVeh(/** @type {typeof V.car} */ v,/** @type {number} */ alpha,/** @
   const s=v.ctrl.s, M=THREE.MathUtils, pv=v.pv;
   v.root.position.set(pv.x+(s.x-pv.x)*alpha,0.04,pv.z+(s.z-pv.z)*alpha); v.root.rotation.y=pv.h+(s.h-pv.h)*alpha;
   if(v.kind==='bike') { // lean into the turn, wheels roll, the fork steers
-    v.tilt.rotation.z+=(M.clamp(s.yawRate*s.speed*0.022,-0.5,0.5)-v.tilt.rotation.z)*0.15;
-    v.tilt.rotation.x+=(-M.clamp(s.accel*0.004,-0.06,0.06)-v.tilt.rotation.x)*0.12;
+    /* Lean is a function of how hard the bike is actually turning (lateral acceleration), so it is
+       zero when stationary — a stopped bike with a leaning rider looked like it was falling over.
+       The roll also grows with speed, then saturates: the bike is not thrown sideways on a crawl. */
+    const sp=Math.abs(s.speed), spF=M.clamp(sp/16,0,1);
+    const targetRoll=M.clamp(s.yawRate*sp*0.022,-0.42,0.42)*M.clamp(0.35+spF*1.35,0,1);
+    v.tilt.rotation.z+=(targetRoll-v.tilt.rotation.z)*Math.min(1,0.15+dtf*4);
+    const targetPitch=-M.clamp(s.accel*0.004,-0.06,0.06)*(0.4+spF*0.9);
+    v.tilt.rotation.x+=(targetPitch-v.tilt.rotation.x)*0.12;
     if(v.parts) { v.parts.rear.rotation.z=v.wheel; v.parts.front.rotation.z=v.wheel; v.parts.fork.quaternion.setFromAxisAngle(FORK_AXIS,v.steerAngle=M.clamp(-s.steer*0.9,-0.6,0.6)); }
-    if(v.rider&&v.riderPose) { riderTune.steer=v.steerAngle; v.riderPose.update(riderTune); }
   } else {
     v.tilt.rotation.z+=(-M.clamp(s.yawRate*s.speed*0.004,-0.08,0.08)-v.tilt.rotation.z)*0.12;
     v.tilt.rotation.x+=(-M.clamp(s.accel*0.0035,-0.05,0.05)-v.tilt.rotation.x)*0.12;
@@ -219,12 +240,25 @@ function nearVeh() {
   return best;
 }
 function enterVeh(/** @type {typeof V.car} */ target=undefined,/** @type {boolean} */ force=false) {
-  if(state!=='play'||(!force&&loop.paused)||mode!=='walk'||!hero) return; const v=target||nearVeh(); if(!v) return;
-  hero.move(0,0); hero.sprint(false); disposeHero(); mode='drive'; cur=v; car=v.ctrl;
+  if(state!=='play'||(!force&&loop.paused)||mode!=='walk') return;
+  /* stepping straight from one vehicle into another: finish the pending dismount now, otherwise
+     there is no walking hero to hand to the next vehicle */
+  if(dismountVeh) { dismountT=0; updateDismount(1); }
+  if(!hero) return;
+  const v=target||nearVeh(); if(!v) return;
+  hero.move(0,0); hero.sprint(false);
+  /* Hand the walking body over to the rider: dispose the ragdoll (it detaches its root) and then
+     move that same object onto the bike, so there is exactly one character in the scene. */
+  const model=ragdollRoot();
+  disposeHero();                      // safe: nothing is riding yet
+  const riding=showRider(v,true,model);
+  mode='drive'; cur=v; car=v.ctrl;
   removeParked(v); car.input.throttle=car.input.steer=0; car.input.brake=false; car.s.vx=car.s.vz=car.s.speed=0;
   v.pv.x=car.s.x; v.pv.z=car.s.z; v.pv.h=car.s.h;
   yawOffset=0; camRig.jump(car.s.h+Math.PI, 0.30); yaw=camRig.state.yaw;
-  HAPTICS.tap(); firstMove(); showRider(v,true); if(CONFIG.mission.enabled && mission.s==='idle' && courier.s==='idle') startMission();
+  HAPTICS.tap(); firstMove();
+  if(riding) { v.mountT=0; diag.rider='mounting'; }
+  if(CONFIG.mission.enabled && mission.s==='idle' && courier.s==='idle') startMission();
   ui.playing=false; refreshDriveUi();
 }
 function exitVeh() {
@@ -233,8 +267,10 @@ function exitVeh() {
   const cands=[[c*side,-n*side],[-c*side,n*side],[-n*4.2,-c*4.2],[n*4.2,c*4.2]]; let at=cands[0];
   for(const o of cands) { const x=s.x+o[0], z=s.z+o[1]; if(!city.colliders.some(b=>x>b.minX-0.6&&x<b.maxX+0.6&&z>b.minZ-0.6&&z<b.maxZ+0.6)) { at=o; break; } }
   s.vx=s.vz=s.speed=0; car.input.throttle=car.input.steer=0; car.input.brake=false; brakeHeld=false;
-  showRider(v,false);
-  mode='walk'; hero=makeHero([s.x+at[0],0.3,s.z+at[1]]); wireHero(); parkBody(v); camRig.jump(s.h+Math.PI, 0.34); yaw=camRig.state.yaw;
+  /* the rider is removed and the walking hero created next frame, after DISMOUNT_TIME of the
+     dismount blend has played — see updateDismount() */
+  mode='walk'; dismountVeh=v; dismountT=DISMOUNT_TIME;
+  parkBody(v); camRig.jump(s.h+Math.PI, 0.34); yaw=camRig.state.yaw;
   HAPTICS.tap(); ui.playing=false; refreshDriveUi();
 }
 function resetDriving() {
@@ -243,38 +279,144 @@ function resetDriving() {
     v.ctrl.input.throttle=v.ctrl.input.steer=0; v.ctrl.input.brake=false; v.pv.x=sp.x; v.pv.z=sp.z; v.pv.h=sp.heading; if(v.ready) parkBody(v); }
   brakeHeld=false; resetMission(); resetCourier(); ui.playing=false; refreshDriveUi();
 }
-/** The rider sits on the bobber. The scan is cloned with its own skeleton, then posed by src/pose.js:
- *  pelvis on the measured seat, both hands solved onto the measured grips (so they follow the fork),
- *  feet on the measured pegs. Parented to the tilt group so the whole thing leans and rolls together. */
-const RIDER_SCALE=1.8/1.9;
-/** one shared tune object: no per-frame allocation */
-const riderTune={lean:0.10, elbowOut:0.85, handRoll:0.0, hipLift:0.02, ankleLift:0.075, seatShift:0.09, steer:0};
-/** pull the tuning knobs from CONFIG (registered once, applied live from the mechanics panel) */
+/** The player rides the bobber. The player character IS the rider, so there is no model swap on
+ *  mount: the walking hero steps off the physics body and the same rig is re-parented onto the
+ *  bike and posed by src/riderpose.js. The pose is the verified one (hips on the saddle, hands on
+ *  the measured grips, feet on the measured pegs, knees forward around the tank) with a small
+ *  speed/lean layer on top; mount and dismount are a 0..1 blend of that same pose. */
+const riderTune={};
+/** pull the tuning knobs from CONFIG (applied live from the mechanics panel) */
 function syncRiderTune() {
-  const r=CONFIG.bike;
-  riderTune.lean=(r.riderLean||0)*0.55; riderTune.elbowOut=r.elbowOut||0.85; riderTune.handRoll=r.handRoll||0;
-  riderTune.hipLift=r.hipLift??0.02; riderTune.ankleLift=r.ankleLift??0.075; riderTune.seatShift=r.seatShift??0.09;
+  const r=CONFIG.bike, t=riderTune;
+  t.lean=(r.riderLean??0.42); t.speedLean=r.riderSpeedLean??0.30; t.turnLean=r.riderTurnLean??1.0;
+  t.elbowOut=r.elbowOut||0.55; t.kneeOut=r.kneeOut??0.30; t.seatFwd=r.seatFwd??0.24;
+  t.ankleLift=r.ankleLift??0.08; t.seatGap=r.hipLift??0.045; t.headHold=r.riderHeadHold??0.55;
 }
-for(const k of ['bike.riderLean','bike.hipLift','bike.seatShift','bike.ankleLift','bike.elbowOut','bike.handRoll']) CONFIG.on(k,syncRiderTune);
+for(const k of ['bike.riderLean','bike.riderSpeedLean','bike.riderTurnLean','bike.elbowOut','bike.kneeOut','bike.seatFwd','bike.ankleLift','bike.hipLift','bike.riderHeadHold']) CONFIG.on(k,syncRiderTune);
 syncRiderTune();
-function showRider(/** @type {typeof V.car} */ v,/** @type {boolean} */ on) {
-  if(v.kind!=='bike') return;
-  if(!on) { if(v.rider) { v.rider.traverse(o=> { const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) mm.skeleton.dispose(); }); v.tilt.remove(v.rider); v.rider=null; } v.riderPose=null; return; } // free the rider's skeleton texture
-  if(v.rider||!v.bikeGeom||charKind!=='scan') return;
-  try {
-    const r=cloneSkeleton(MODELS.model(CHAR_MODELS.scan).scene);
-    r.scale.setScalar(RIDER_SCALE);
-    r.traverse(o=> { const mm=/** @type {THREE.SkinnedMesh} */ (o); if(mm.isSkinnedMesh) { mm.frustumCulled=false; mm.castShadow=false; mm.receiveShadow=false; } });
-    v.tilt.add(r);
-    syncRiderTune();
 
-    const pose=createRiderPose(r,v.bikeGeom,v.tilt);
-    if(!pose.ok) { v.tilt.remove(r); console.warn('[bike] rider rig missing bones:',pose.missing); return; }
-    const lean=pose.calibrate(riderTune);
-    pose.update(riderTune);
-    v.rider=r; v.riderPose=pose; diag.rider=`seated, lean ${lean.toFixed(2)} rad, stretch ${pose.stretch.toFixed(2)}`;
-  } catch(error) { console.warn('[bike] rider unavailable, riding without one:',error); v.rider=null; v.riderPose=null; }
+/**
+ * Restores the character's bones to the bind pose it shipped in.
+ *
+ * The rider is the same object as the walking body, so when it comes back for a second ride its
+ * bones still hold whatever the last pose left them in. createRiderPose() captures the *current*
+ * transforms as its rest pose, so without this the second mount calibrates against an already
+ * seated body and needs a much bigger lean (measured: 0.84 rad instead of 0.40 — a 48 degree tuck,
+ * which is exactly the "lying on the bike" look this pose exists to avoid). `charModel` is the
+ * pristine clone the ragdoll copies from, so it is always the T-pose reference.
+ */
+let bindPose=/** @type {Map<string,{p:THREE.Vector3,q:THREE.Quaternion,s:THREE.Vector3}>|null} */ (null);
+/** Snapshot the character's T-pose once, when it is first built. `charModel` is the object the
+ *  ragdoll clones from and is *not* modified by posing, but taking an explicit copy means the
+ *  reference can never be affected by anything that does touch it later. */
+function captureBindPose(/** @type {THREE.Object3D} */ model) {
+  bindPose=new Map();
+  model.traverse(o=> {
+    if(!o.isBone) return;
+    bindPose.set(o.name,{ p:o.position.clone(), q:o.quaternion.clone(), s:o.scale.clone() });
+  });
+  return bindPose.size;
 }
+function adoptBindPose(/** @type {THREE.Object3D} */ model) {
+  if(!bindPose) return 0;
+  const src=bindPose;
+  let restored=0;
+  model.traverse(o=> {
+    if(!o.isBone) return;
+    const b=src.get(o.name);
+    if(!b) return;
+    o.position.copy(b.p); o.quaternion.copy(b.q); o.scale.copy(b.s);
+    restored++;
+  });
+  model.updateMatrixWorld(true);
+  return restored;
+}
+
+/**
+ * Takes the character off the bike. The ragdoll that supplied the model still holds a reference to
+ * it (`hero.dispose()` re-detaches its root from wherever it is), so the hero record is disposed
+ * here *before* the model is reparented — otherwise a later dispose would silently pull the rider
+ * back out of the bike, and the disconnected graph would keep a whole character alive.
+ */
+function dropRider(/** @type {typeof V.car} */ v) {
+  if(!v.rider){ v.riderPose=null; return null; }
+  const model=v.rider;
+  if(v.riderPose) v.riderPose.unmount();
+  v.rider=null; v.riderPose=null; v.mountT=0;
+  return model;
+}
+
+/**
+ * Move the walking hero onto the bike (or back off it). Returns true when the rider is on the bike.
+ * `on` only starts the blend — the pose itself is driven every frame by poseRider(), so mounting
+ * is an animation rather than a teleport.
+ */
+function showRider(/** @type {typeof V.car} */ v,/** @type {boolean} */ on,/** @type {THREE.Object3D|null|undefined} */ model) {
+  if(v.kind!=='bike') return false;
+  if(on===false) { const m=dropRider(v); if(m) m.removeFromParent(); return false; }
+  if(v.rider) return true;
+  if(!v.bikeGeom||!charModel||charKind!=='suit') return false;
+  try {
+    /* The character that was just walking is reused as the rider — same rig, same face, same
+       outfit, no second copy of a 12 MB model. `model` is passed in because by now it has already
+       been detached from the ragdoll. */
+    const r=model||ragdollRoot();
+    if(!r) { console.warn('[bike] no character model to ride with'); return false; }
+    r.removeFromParent();
+    r.position.set(0,0,0); r.rotation.set(0,0,0); r.scale.setScalar(1);
+    try { adoptBindPose(r); } catch(error) { console.warn('[bike] bind-pose restore failed:',error); }
+    v.tilt.add(r);
+    r.traverse(o=> { const m=/** @type {THREE.Mesh} */ (o); if(m.isMesh) { m.frustumCulled=false; m.castShadow=charKind==='suit'; m.receiveShadow=false; } });
+    syncRiderTune();
+    const pose=createRiderPose(r,v.bikeGeom,riderTune);
+    if(!pose.ok) { r.removeFromParent(); scene.add(r); console.warn('[bike] rider rig missing bones:',pose.missing); return false; }
+    pose.calibrate();
+    pose.update(undefined,0,0);
+    v.rider=r; v.riderPose=pose; v.mountT=0;
+    diag.rider=`seated (lean ${pose.leanNow().toFixed(2)} rad), mounting`;
+    return true;
+  } catch(error) { console.warn('[bike] rider unavailable, riding without one:',error); v.rider=null; v.riderPose=null; v.mountT=0; return false; }
+}
+
+/** Mount / dismount progress 0..1, and the per-frame riding pose. */
+const MOUNT_TIME=0.55;      // seconds to step on and settle into the saddle
+const DISMOUNT_TIME=0.42;   // seconds to rise off the saddle before the walker takes over
+/** @type {typeof V.car|null} */ let dismountVeh=null; let dismountT=0;
+/** Runs the dismount blend, then hands the character back to the walking ragdoll. */
+function updateDismount(/** @type {number} */ dt) {
+  if(!dismountVeh) return;
+  const v=dismountVeh;
+  if(v.riderPose&&v.rider) {
+    /* drive the blend straight from the countdown so the pose and the hand-over cannot disagree */
+    v.mountT=Math.max(0,Math.min(1,dismountT/DISMOUNT_TIME));
+    v.riderPose.ride(dt,{ mix:v.mountT, speed:0, accel:0, roll:v.tilt.rotation.z, steer:0 });
+  }
+  dismountT-=dt;
+  if(dismountT>0) return;
+  // the blend has played: take the model back off the bike and hand it to the ragdoll
+  const s=v.ctrl.s, c=Math.cos(s.h), n=Math.sin(s.h), side=1.7;
+  const cands=[[c*side,-n*side],[-c*side,n*side],[-n*4.2,-c*4.2],[n*4.2,c*4.2]]; let at=cands[0];
+  for(const o of cands) { const x=s.x+o[0], z=s.z+o[1]; if(!city.colliders.some(b=>x>b.minX-0.6&&x<b.maxX+0.6&&z>b.minZ-0.6&&z<b.maxZ+0.6)) { at=o; break; } }
+  /* take the character off the bike and give the walking body a fresh ragdoll. RAGDOLL.create()
+     clones whatever model it is given, so the posed model is not handed over: the clone comes from
+     the same source and therefore looks identical. */
+  const model=dropRider(v);
+  if(model) model.removeFromParent();
+  hero=makeHero([s.x+at[0],0.3,s.z+at[1]]); wireHero();
+  dismountVeh=null; diag.rider='on foot';
+}
+function poseRider(/** @type {typeof V.car} */ v,/** @type {number} */ dt,/** @type {boolean} */ mounting) {
+  if(!v.rider||!v.riderPose) return;
+  const step=dt/MOUNT_TIME;
+  if(mounting) {
+    const wasMounted=v.mountT>=1;
+    v.mountT=Math.min(1,v.mountT+step);
+    if(!wasMounted&&v.mountT>=1) diag.rider=`seated (lean ${v.riderPose.leanNow().toFixed(2)} rad), hands on grips`;
+  }
+  const s=v.ctrl.s;
+  v.riderPose.ride(dt,{ mix:v.mountT, speed:s.speed, accel:s.accel, roll:v.tilt.rotation.z, steer:v.steerAngle });
+}
+
 const ui={near:/** @type {typeof V.car|null} */ (null),playing:false,label:'',kmh:-1};
 function setShown(/** @type {HTMLElement} */ el,/** @type {boolean} */ on,/** @type {string} */ shown='block') { const v=on?shown:'none'; if(el.style.display!==v) el.style.display=v; }
 function refreshDriveUi() {
@@ -527,6 +669,10 @@ const loop=startLoop({
       if(slowMs>4000) { qualityLevel++; slowMs=0; applyQuality(); }
     } else slowMs=0;
     const dtf=Math.min(ft,100)/1000;
+    /* the rider: while riding, the pose follows the bike every frame; on foot, a pending dismount
+       blend finishes first. Both are skipped entirely when there is no rider. */
+    if(mode==='drive'&&cur&&cur.kind==='bike') poseRider(cur,dtf,true);
+    updateDismount(dtf);
     for(const v of VLIST) if(v.ready) drawVeh(v,alpha,dtf);
     let lx=0,lz=0;
     if(mode==='drive' && cur) {
@@ -568,8 +714,9 @@ async function loadBuilding(kind,name) {
   UI.ready(true); UI.setSave(!!SAVE.get('started',false));
 })();
 /** Fresh copy of the uploaded character, mapped to the ragdoll and (optionally) dressed. */
-const CHAR_MODELS={scan:'char_scan_lite',mannequin:'characterrigged'}; /** @type {'scan'|'mannequin'} */ let charKind='mannequin';
-function buildCharacter(/** @type {'scan'|'mannequin'} */ kind=charKind) {
+const CHAR_MODELS={suit:'male_character_in_suit',scan:'char_scan_lite',mannequin:'characterrigged'}; /** @type {'suit'|'scan'|'mannequin'} */ let charKind='suit';
+function buildCharacter(/** @type {'suit'|'scan'|'mannequin'} */ kind=charKind) {
+  if(kind==='suit') return prepareSuitCharacter(MODELS.model(CHAR_MODELS.suit).scene);
   if(kind==='scan') return prepareScanCharacter(MODELS.model(CHAR_MODELS.scan).scene);
   const c=CONFIG.character;
   return prepareCharacter(MODELS.model(CHAR_MODELS.mannequin).scene,c.tint,c.dressed?{hoodie:CONFIG.palette.hoodie,pants:c.pants,shoes:c.shoes,skin:c.skin,hair:c.hair,cap:c.cap}:null);
@@ -592,11 +739,13 @@ async function loadExtras() {
   } catch(error) { console.warn('[bike] model unavailable:',error); V.bike.source=null; mountVeh(V.bike); diag.bike='fallback box bike (model unavailable)'; }
   readyVeh(V.bike); ui.playing=false; refreshDriveUi();
   /** @type {string[]} */ const cn=[];
-  for(const kind of /** @type {('scan'|'mannequin')[]} */ (CONFIG.character.model==='scan'?['scan','mannequin']:['mannequin'])) {
+  /* the suit character is the player; the V2 scan and the mannequin remain as fallbacks */
+  const cm=CONFIG.character.model;
+  for(const kind of /** @type {('suit'|'scan'|'mannequin')[]} */ (cm==='mannequin'?['mannequin']:cm==='scan'?['scan','mannequin']:['suit','scan','mannequin'])) {
     try {
       await MODELS.load([CHAR_MODELS[kind]]);
       const r=buildCharacter(kind);
-      if(r.model) { charModel=r.model; charKind=kind; diag.char=`${kind} character: rig accepted (rest pose ${r.info.restPose}, facing ${r.info.facing}); ${r.dressed}`+(cn.length?' [fallback: '+cn.join('; ')+']':''); if(CONFIG.character.useModel) swapHero(); break; }
+      if(r.model) { charModel=r.model; charKind=kind; diag.bind=captureBindPose(r.model)+' bones'; diag.char=`${kind} character: rig accepted (rest pose ${r.info.restPose}, facing ${r.info.facing}); ${r.dressed}`+(cn.length?' [fallback: '+cn.join('; ')+']':''); if(CONFIG.character.useModel) swapHero(); break; }
       cn.push(kind+': '+r.reason); console.warn('[character]',kind,r.reason);
     } catch(error) { cn.push(kind+': could not load'); console.warn('[character] unavailable:',kind,error); }
   }

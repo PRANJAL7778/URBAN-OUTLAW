@@ -16,6 +16,10 @@ import { createRiderPose, measureSaddle } from './src/riderpose.js';
 const OUT = process.env.OUT || '/tmp/shots';
 const BIKE_BACK = Number(process.env.BACK || 0);
 const STAND = !!process.env.STAND;
+const MIX = process.env.MIX !== undefined ? Number(process.env.MIX) : 1;
+const SPEED = Number(process.env.SPEED || 0);
+const ROLL = Number(process.env.ROLL || 0);
+const GAME_Y = process.env.GAME_Y !== '0';  // the game puts the bike root at y = 0.04
 
 const loader = new GLTFLoader();
 const load = async (p) => {
@@ -30,6 +34,7 @@ const size = new THREE.Box3().setFromObject(inner).getSize(new THREE.Vector3());
 inner.scale.multiplyScalar(2.2 / size.x);
 inner.rotation.y = Math.PI / 2;
 const bike = new THREE.Group();
+if (GAME_Y) bike.position.y = 0.04;
 bike.add(inner);
 bike.updateMatrixWorld(true);
 const bb = new THREE.Box3().setFromObject(bike), ctr = bb.getCenter(new THREE.Vector3());
@@ -83,7 +88,13 @@ if (!STAND) {
   cands.sort((a, b) => a.score - b.score);
   const best = cands[0];
   pose.setTune({ seatFwd: best.fwd, lean: best.lean });
-  pose.update();
+  pose.update(undefined, 0, MIX);
+  if (SPEED || ROLL) {
+    // settle the smoothed speed the way the game would, then take one posed frame
+    for (let i = 0; i < 90; i++) pose.ride(1/60, { mix: 1, speed: SPEED, accel: 0, roll: ROLL, steer: 0 });
+    pose.tune._drawn = false;
+    pose.ride(1/60, { mix: 1, speed: SPEED, accel: 0, roll: ROLL, steer: 0 });
+  }
   cal = best;
   console.log(`chosen: seatFwd ${best.fwd.toFixed(2)} m · chest ${(best.chest * 57.3).toFixed(0)}° · arm ${(best.arm * 100).toFixed(0)}% · leg ${(best.leg * 100).toFixed(0)}% · seated ${best.seated.toFixed(2)}`);
 } else {

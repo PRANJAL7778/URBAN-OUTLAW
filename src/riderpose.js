@@ -59,6 +59,17 @@ export const RIDER_DEFAULTS = {
   headLevel: 0.70,
   fingerCurl: 0.62,
   thumbCurl: 0.40,
+
+  /* --- live riding motion (all applied on top of the static seated pose) --- */
+  speedLean: 0.17,      // extra forward lean at top speed, radians (a bobber tucks ~30 deg, no more)
+  turnLean: 1.00,       // share of the bike's roll the rider's torso follows
+  accelLean: 0.008,     // radians per m/s^2 of acceleration (sit back when pulling away)
+  braceMax: 0.05,       // cap on that weight shift: it must never cancel the speed tuck
+  headHold: 0.55,       // how much the head resists the torso lean (eyes stay level)
+  blendRate: 8.0,       // mount/dismount blend speed (1/s)
+  seatGapMount: 0.34,   // how far above the saddle the hips start when mounting
+  mountSide: 0.42,      // how far out to the side the hips start (the rider steps up from the left)
+  mountBack: 0.10,      // and a little behind the saddle
 };
 
 /**
@@ -187,7 +198,7 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     return { d, arm: restArmLen, ok: d <= restArmLen * 0.985 };
   }
 
-  let restChestH = 0.30, restShoulderX = 0.18, restArmLen = 0.52, restLegLen = 0.85;
+  let restChestH = 0.30, restShoulderX = 0.18, restArmLen = 0.52, restLegLen = 0.85, restHipX = 0.10;
   {
     const hips = B.Hips_01.getWorldPosition(new THREE.Vector3());
     const chest = B.Spine2_04.getWorldPosition(new THREE.Vector3());
@@ -201,9 +212,11 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     const shin = B[J.L.shin].getWorldPosition(new THREE.Vector3());
     const foot = B[J.L.foot].getWorldPosition(new THREE.Vector3());
     restLegLen = thigh.distanceTo(shin) + shin.distanceTo(foot);
+    restHipX = Math.abs(B[J.L.thigh].getWorldPosition(new THREE.Vector3()).x - hips.x);
   }
 
-  let lean = t.lean;
+  let lean = t.lean;          // the lean in use this frame
+  let baseLean = t.lean;      // the calibrated seated lean: ride() blends around this
   let calibrated = false;
   let reach = 0;
   /** angle of the chest (shoulder midpoint) from the hips, in radians from vertical */
@@ -216,8 +229,11 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     return Math.acos(Math.min(1, Math.abs(up.y)));
   }
 
-  /** Rebuild the whole riding pose from the bind pose. */
-  function update(leanOverride) {
+  /** Rebuild the whole riding pose from the bind pose.
+   *  @param {number} [leanOverride] torso lean in radians
+   *  @param {number} [rollOverride] extra roll about the bike's forward axis (rad)
+   *  @param {number} [mix] 0 = standing beside the bike, 1 = fully seated. Used for mount/dismount. */
+  function update(leanOverride, rollOverride, mix) {
     if (typeof leanOverride === 'number') lean = leanOverride;
     else if (typeof t.lean === 'number' && !calibrated) lean = t.lean;
     reset();
@@ -227,7 +243,18 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     const hipZ = seat.z + t.seatFwd;
     const surfaceY = surfaceAt(bikeGeom, hipZ);
     const pelvisTarget = new THREE.Vector3(seat.x, surfaceY + t.seatGap, hipZ);
-    const upDir = new THREE.Vector3(0, Math.cos(lean), Math.sin(lean)).normalize();
+    /* mount / dismount: the pelvis rises off the saddle and the whole body stands up. `mix` is
+       smoothed by ride(), so this is only ever read as a 0..1 position along that path. */
+    const m0 = typeof mix === 'number' ? Math.max(0, Math.min(1, mix)) : 1;
+    const stand = 1 - m0;
+    if (stand > 0.001) {
+      // rise straight up out of the saddle and move out to the left of the bike
+      pelvisTarget.y += stand * t.seatGapMount;
+      pelvisTarget.x += stand * t.mountSide;
+      pelvisTarget.z += stand * t.mountBack;
+    }
+
+    const liveLean = lean * m0;
 
     /* ---- 1. pelvis: put the hips on the saddle nose, then pitch the whole body forward ---- */
     const hips = B.Hips_01;
@@ -241,20 +268,34 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     hips.position.add(slide);
     hips.updateWorldMatrix(true, true);
     // one rotation on the hips tips the entire body: this is the pose's main lever
-    rotW(hips, X, lean);
+    rotW(hips, X, liveLean);
 
     /* ---- 2. spine: a small extra curve so the back is not a straight plank ---- */
-    SPINE.forEach((n, i) => rotW(B[n], X, lean * t.spineCurve * (i === 0 ? 0.20 : i === 1 ? 0.16 : 0.12)));
+    SPINE.forEach((n, i) => rotW(B[n], X, liveLean * t.spineCurve * (i === 0 ? 0.20 : i === 1 ? 0.16 : 0.12)));
+
+    /* ---- 2b. counter-roll: the bike lays into a turn, the rider's shoulders stay closer to
+       upright, which is what stops a pillion-style "tipping over" look at low speed ---- */
+    if (rollOverride) {
+      const axisF = new THREE.Vector3(0, 0, 1);
+      SPINE.forEach((n) => rotW(B[n], axisF, rollOverride * 0.5));
+      rotW(B.Neck_05, axisF, rollOverride * 0.3);
+      rotW(B.Head_08, axisF, rollOverride * 0.2);
+    }
 
     /* ---- 3. neck / head: keep the eyes on the road instead of staring at the tank ---- */
-    rotW(B.Neck_05, X, -lean * t.headLevel * 0.55);
-    rotW(B.Head_08, X, -lean * t.headLevel * 0.45);
+    rotW(B.Neck_05, X, -liveLean * t.headLevel * 0.55);
+    rotW(B.Head_08, X, -liveLean * t.headLevel * 0.45);
 
     /* ---- 4. legs: knee out and forward around the tank, ankle on the measured peg ---- */
     for (const s of SIDES) {
       const jd = J[s];
       const peg = bikeGeom.pegs.find((p) => Math.sign(p.x) === jd.out) || bikeGeom.pegs[0];
       const ankle = new THREE.Vector3(peg.x + jd.out * t.ankleOut, peg.y + t.ankleLift, peg.z);
+      if (stand > 0.001) {
+        // a standing foot: straight down under the hip, at the saddle gap's foot level
+        const px = pelvisTarget.x + jd.out * restHipX;
+        ankle.lerp(new THREE.Vector3(px, pelvisTarget.y - restLegLen, pelvisTarget.z + stand * 0.10), stand);
+      }
       const hip = B[jd.thigh].getWorldPosition(new THREE.Vector3());
       const ankleW = g2w(ankle);
       const mid = hip.clone().add(ankleW).multiplyScalar(0.5);
@@ -279,6 +320,11 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
       const grip = bikeGeom.grips.find((g) => Math.sign(g.x) === jd.out) || bikeGeom.grips[s === 'L' ? 0 : 1];
       const palm = g2w(grip);
       const wrist = palm.clone().add(new THREE.Vector3(-jd.out * t.wristIn, t.wristUp, 0));
+      if (stand > 0.001) {
+        // arms hang by the sides while standing on the pegs / beside the bike
+        const shNow = B[jd.arm].getWorldPosition(new THREE.Vector3());
+        wrist.lerp(shNow.add(new THREE.Vector3(jd.out * 0.20, -restArmLen * 0.92, 0.02)), stand);
+      }
       const sh = B[jd.arm].getWorldPosition(new THREE.Vector3());
       reach = Math.max(reach, sh.distanceTo(wrist) / (restArmLen || 1));
       const pole = new THREE.Vector3(jd.out * t.elbowOut, -t.elbowDown, -0.15).normalize();
@@ -286,7 +332,7 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
       rig.updateWorldMatrix(true, true);
       // hand around the bar: fingers curl, thumb closes over the top
       for (const [finger, chain] of Object.entries(FINGERS[s])) {
-        const curl = finger === 'Thumb' ? t.thumbCurl : t.fingerCurl;
+        const curl = (finger === 'Thumb' ? t.thumbCurl : t.fingerCurl) * (0.18 + 0.82 * m0);
         for (const b of chain) if (B[b]) rotW(B[b], X, curl * (finger === 'Thumb' ? 0.6 : 1));
       }
       rig.updateWorldMatrix(true, true);
@@ -294,19 +340,25 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
     return { lean, reach };
   }
 
-  /** Try a lean, keep it if the arms can reach the bars without locking out. */
+  /**
+   * Pick the seated lean. The calibrated default (`t.lean`) is the value verified against the real
+   * bobber, so it is used as-is; the search below only runs if that lean cannot reach the bars at
+   * all (a different bike, or a model with shorter arms). The previous version always searched
+   * from 0.20 rad, which silently replaced the verified pose with a badly-stretched one.
+   */
   function calibrate(over = {}) {
     Object.assign(t, over);
-    let best = null;
-    for (let cand = 0.20; cand <= 0.85; cand += 0.02) {
-      lean = cand;
-      update();
+    update(t.lean, 0, 1);
+    if (reach <= 0.985) { baseLean = t.lean; lean = t.lean; calibrated = true; return { lean, reach }; }
+    let best = { score: Infinity, lean: t.lean, reach };
+    for (let cand = t.lean; cand <= 0.85; cand += 0.02) {
+      update(cand, 0, 1);
       const score = Math.abs(reach - 0.94) + Math.max(0, reach - 0.985) * 20;
-      if (!best || score < best.score) best = { score, lean: cand, reach };
+      if (score < best.score - 1e-9) best = { score, lean: cand, reach };
+      if (reach <= 0.985) break;              // first lean that reaches: no need to go further
     }
-    lean = best.lean;
-    calibrated = true;
-    update();
+    lean = best.lean; baseLean = best.lean; calibrated = true;
+    update(lean, 0, 1);
     return { lean, reach };
   }
 
@@ -347,7 +399,58 @@ export function createRiderPose(rig, bikeGeom, tune = {}) {
   }
 
   /** commit tuning values (used after a search outside this module) */
-  function setTune(over = {}) { Object.assign(t, over); if (typeof over.lean === 'number') lean = over.lean; calibrated = true; return t; }
+  function setTune(over = {}) { Object.assign(t, over); if (typeof over.lean === 'number') { lean = over.lean; baseLean = over.lean; } calibrated = true; return t; }
 
-  return { ok: true, update, calibrate, reach: () => reach, bones: B, tune: t, trial, seatContact, setTune, leanNow: () => lean };
+  /* ------------------------------------------------------------------ live riding */
+
+  /**
+   * The pose the game actually plays each frame: the verified static seated pose plus a small,
+   * damped amount of motion. Everything here is additive on top of `update()`, so the verified
+   * contact (hands on grips, feet on pegs, hips on saddle) never changes.
+   *
+   * @param {number} dt      seconds
+   * @param {{speed:number, accel:number, roll:number, steer:number, mix:number}} m
+   *        speed  m/s · accel m/s^2 · roll the bike's current lean (rad) · steer (rad)
+   *        mix 0..1 how far into the riding pose we are (mount/dismount blend)
+   */
+  function ride(dt, m) {
+    if (!t._mounted) { reset(); t._mounted = true; t._mix = 0; t._smSpeed = 0; t._smAccel = 0; }
+    const target = Math.max(0, Math.min(1, m.mix === undefined ? 1 : m.mix));
+    // smooth the blend so a mount/dismount never snaps
+    const k = 1 - Math.exp(-t.blendRate * Math.max(0, Math.min(0.1, dt)));
+    t._mix = t._mix === undefined ? target : t._mix + (target - t._mix) * k;
+    // smooth speed and acceleration: the bike's own numbers are noisy frame to frame
+    const a = 1 - Math.exp(-6 * Math.max(0, Math.min(0.1, dt)));
+    t._smSpeed += ((m.speed || 0) - t._smSpeed) * a;
+    t._smAccel += ((m.accel || 0) - t._smAccel) * a;
+
+    /* speed: tuck down progressively (never more than `speedLean`), 0 at a standstill */
+    const speedF = Math.min(1, Math.abs(t._smSpeed) / 22);
+    const tuck = t.speedLean * speedF * speedF;
+    /* going faster tucks you down, and that must dominate. The weight shift under acceleration is
+       real but small: an earlier version allowed -0.18 rad here, which cancelled the whole speed
+       tuck and made the rider sit UP as he accelerated. It is now capped well below the tuck. */
+    const accel = Math.max(-9, Math.min(9, t._smAccel));
+    const brace = Math.max(-t.braceMax, Math.min(t.braceMax, -accel * t.accelLean));
+    /* a turn rolls the whole bike (the rider is parented to it); the rider's spine gives back a
+       fraction of that so his head stays nearer level instead of being thrown sideways */
+    const roll = (m.roll || 0) * -t.headHold * (1 - 0.55 * speedF);
+
+    const live = baseLean + tuck + brace;
+    /* Rebuilding costs ~0.3 ms of CPU, so skip it when the inputs would not visibly change the
+       pose. A seated rider at a steady speed then costs nothing, which is most of the time. */
+    const mixNow = t._mix;
+    if (!t._drawn || Math.abs(live - t._drawnLean) > 0.008 || Math.abs(roll - t._drawnRoll) > 0.008
+        || Math.abs(mixNow - t._drawnMix) > 0.004) {
+      update(live, roll, mixNow);
+      t._drawnLean = live; t._drawnRoll = roll; t._drawnMix = mixNow; t._drawn = true;
+    }
+    return t._mix;
+  }
+
+  /** drop back to the neutral state (called when the rider is removed) */
+  function unmount() { t._mounted = false; t._mix = 0; t._drawn = false; }
+
+  return { ok: true, update, calibrate, reach: () => reach, bones: B, tune: t, trial, seatContact, setTune,
+    leanNow: () => lean, ride, unmount, chestLean };
 }

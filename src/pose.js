@@ -270,14 +270,36 @@ export function createRiderPose(rider, bike, tilt) {
 /* ------------------------------------------------------------------ hero */
 
 /**
+ * Bone aliases for the arms and head, so the hero pose works on any humanoid rig in the game.
+ * The ragdoll accepts several character models and keeps their own bone names: the V2 scan uses
+ * `leftUpperArm`, the MetaHuman-style suit rig uses `LeftArm_013`. Resolving through aliases means
+ * the walk never silently loses its arm animation when the character model is swapped.
+ */
+const HERO_ALIASES = {
+  hips: ['hips', 'Hips_01'],
+  head: ['head', 'Head_08'],
+  leftUpperArm: ['leftUpperArm', 'LeftArm_013'],
+  leftLowerArm: ['leftLowerArm', 'LeftForeArm_014'],
+  leftHand: ['leftHand', 'LeftHand_017'],
+  rightUpperArm: ['rightUpperArm', 'RightArm_039'],
+  rightLowerArm: ['rightLowerArm', 'RightForeArm_040'],
+  rightHand: ['rightHand', 'RightHand_043'],
+};
+
+/**
  * @param {THREE.Object3D} model the 'ragdoll-model' object
  * @param {any} hero ragdoll character
  * @param {{swing:number, out:number, handRoll:number}} tune
  */
 export function createHeroPose(model, hero, tune) {
-  const B = bonesOf(model);
-  const need = ['hips', 'head', 'leftUpperArm', 'leftLowerArm', 'leftHand', 'rightUpperArm', 'rightLowerArm', 'rightHand'];
-  if (need.some((n) => !B[n])) return { ok: false, update() {} };
+  const all = bonesOf(model);
+  /** @type {Record<string, THREE.Bone>} */ const B = {};
+  let missing = false;
+  for (const [key, names] of Object.entries(HERO_ALIASES)) {
+    const found = names.map((n) => all[n]).find(Boolean);
+    if (found) B[key] = found; else missing = true;
+  }
+  if (missing) return { ok: false, update() {} };
   let phase = 0;
   const SIDES = [{ s: 'left', sign: 1 }, { s: 'right', sign: -1 }];
   const S = new THREE.Vector3(), E = new THREE.Vector3(), Hd = new THREE.Vector3();

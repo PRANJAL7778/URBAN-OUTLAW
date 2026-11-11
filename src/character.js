@@ -106,6 +106,26 @@ function dress(source, o) {
   return 'clothing painted (hoodie, jeans, sneakers) + cap';
 }
 
+/** The player character: the MetaHuman-style rig in `assets/male_character_in_suit.glb`.
+ *  74 joints, T-pose, no animation clips, faces +Z, 1.81 m tall in metres. Nothing to repaint or
+ *  re-rig: the ragdoll generates the walk from the bone names and src/riderpose.js builds the
+ *  riding pose, so this only checks the rig and sets the shadow flags. */
+/** @param {THREE.Object3D} source */
+export function prepareSuitCharacter(source) {
+  /** @type {THREE.SkinnedMesh|null} */ let sm = null;
+  source.traverse(n => { if (/** @type {THREE.SkinnedMesh} */ (n).isSkinnedMesh) sm = /** @type {THREE.SkinnedMesh} */ (n); });
+  if (!sm) return { model: null, reason: 'suit character has no skinned mesh' };
+  source.traverse(n => {
+    const m = /** @type {THREE.Mesh} */ (n);
+    if (!m.isMesh) return;
+    m.castShadow = true; m.receiveShadow = false;
+    m.frustumCulled = false;      // 9 skinned parts: culling them per frame costs more than it saves
+  });
+  const info = RAGDOLL.inspectModel(source);
+  if (!info.ok) return { model: null, reason: 'ragdoll rejected the suit rig: ' + (info.error || 'unknown') };
+  return { model: source, reason: '', info, dressed: 'suit character (outfit is real geometry in the GLB)' };
+}
+
 /** The new scanned man ("char_scan_lite"): already rigged with the humanoid bone names the ragdoll expects and already clothed
  *  (colours baked into the vertices), so it only needs checking and shadow flags. Returns model:null if the ragdoll rejects it. */
 /** @param {THREE.Object3D} source */
